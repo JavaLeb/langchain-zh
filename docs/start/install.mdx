@@ -2,6 +2,9 @@
 sidebar_position: 1
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # 安装
 
 本节介绍在Windows 11系统上安装LangChain的开发环境。
@@ -77,9 +80,17 @@ conda deactivate
 
 激活conda虚拟环境py312，然后执行如下命令安装LangChain包。
 
+<Tabs>
+  <TabItem value="pip" label="pip" default>
 ```bash
 pip install -U langchain
 ```
+  </TabItem>
+  <TabItem value="uv" label="uv">
+
+  </TabItem>
+</Tabs>
+
 如图：
 ![LangChain Install](/img/start/langchain-install.png)
 
