@@ -1,6 +1,7 @@
 # Website
 
 This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
+用户可直接访问[langchain-zh](https://javaleb.github.io/langchain-zh/)
 
 ## Installation
 

@@ -1,0 +1,93 @@
+---
+sidebar_position: 1
+---
+
+# 安装
+
+本节介绍在Windows 11系统上安装LangChain的开发环境。
+
+
+| 名称 | 版本 | 下载地址 | 说明 |
+| ---- | ---- | ---- | ---- |
+| PyCharm | 2026.2 | https://www.jetbrains.com/pycharm/download/?section=windows | 开发Python项目 |
+| Miniconda | 26.9.4 | https://www.anaconda.com/download/success?reg=skipped-miniconda | 管理多个Python环境 |
+| Python | 3.12 | 使用Miniconda来安装 | Python语言 |
+| LangChain | 1.4.8 | 使用Miniconda来安装 | LangChain包 |
+
+
+## 安装PyCharm
+PyCharm安装包下载好以后，直接双击按照步骤安装即可。
+PyCharm更智能一些，因此使用时比较消耗内存，如果用户Windows资源有限，也可以使用VS Code。
+
+## 安装Miniconda
+
+
+Miniconda安装包下载好后，双击按照步骤直接安装。例如安装目录如下：
+```bash
+D:\SOFT\miniconda3
+```
+如图：
+![Miniconda Dir](/img/start/miniconda-dir.png)
+
+配置环境变量，以便可以使用命令。
+- 配置Miniconda家目录
+  - 变量名为MINICONDA_HOME，值为D:\SOFT\miniconda3。变量名用户可以自定义。
+- 配置Path
+  - 在Path中添加%MINICONDA_HOME%\condabin，这里MINICONDA_HOME为Miniconda家目录，必须上一步骤名称相同。
+
+重新打开命令行，执行如下命令，查看Miniconda是否安装和配置成功：
+```bash
+conda -V
+```
+如图：
+![Miniconda Version](/img/start/miniconda-version.png)
+
+## 安装Python
+
+Miniconda安装完成后，可以安装Python环境了。
+
+打开Windows命令行，执行如下命令，在Miniconda中创建一个Python环境:
+
+```bash
+conda create -n py312 python=3.12 pip
+```
+
+- conda create表示创建conda虚拟环境。
+- py312指定该Python环境的名称。
+- python=3.12指定Python的版本为3.12。
+- pip表示同时在该环境中安装pip。
+
+如图：
+![Python Installing](/img/start/python-installing.png)
+
+安装成功后，如图：
+![Python Installed](/img/start/python-installed.png)
+
+现在就可以激活和停用该虚拟环境了。
+在命令行执行如下命令，可分别激活和停用py312环境：
+```bash
+conda activate py312
+conda deactivate
+```
+如图：
+![Python Activate](/img/start/python-activate-deactivate.png)
+注意到，环境激活成功后，提示符以环境名称(py312)开始。
+
+## 安装LangChain
+
+激活conda虚拟环境py312，然后执行如下命令安装LangChain包。
+
+```bash
+pip install -U langchain
+```
+如图：
+![LangChain Install](/img/start/langchain-install.png)
+
+可在命令行执行如下命令，查看langchain的版本：
+```bash
+pip show langchain
+```
+如图：
+![LangChain Version](/img/start/langchain-version.png)
+
+到此，你就在Windows上搭建好了LangChain的开发环境。

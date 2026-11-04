@@ -21,14 +21,12 @@ const sidebars: SidebarsConfig = {
   tutorialSidebar: [
     {
       type: 'category',
-      label: '快速开始',
-      items: ['intro'],
+      label: '开始',
+      collapsible: true, // 设为 true 可折叠
+      items: ['start/install', 'start/quick_start'],
     },
-    {
-      type: 'category',
-      label: 'LangChain Demo',
-      items: ['demo/langchain-chat'],
-    },
+
+
   ],
    
 };
