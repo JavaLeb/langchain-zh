@@ -2,9 +2,311 @@
 sidebar_position: 2
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # 快速开始
 
 本节介绍如何快速搭建一个完整功能的AI Agent。
 
-## Getting Started
+## 构建一个基本的Agent
 
+考虑到qwen2.5:3b-instruct是一个占用资源小，又可以调用工具的LLM，因此本例以Ollama的qwen2.5:3b-instruct模型为例。
+
+
+具体代码如下：
+<Tabs>
+  <TabItem value="ollama" label="ollama" default>
+    ```python 
+    from langchain.agents import create_agent
+
+
+    def get_weather(city: str) -> str:
+        """Get weather for a given city."""
+
+        print("正在调用get_weather工具……")
+
+        return f"It's always sunny in {city}!"
+
+
+    agent = create_agent(
+        model="ollama:qwen2.5:3b-instruct",
+        tools=[get_weather],
+        system_prompt="You are a helpful assistant",
+    )
+
+    for _ in range(2):
+        result = agent.invoke(
+            input={"messages": [{"role": "user", "content": "What's the weather in San Francisco?"}]}
+        )
+        print(result["messages"][-1].content_blocks)
+
+    ```
+  </TabItem>
+</Tabs>
+
+代码说明：
+- 代码中使用langchain.agents的create_agent创建了一个agent，该agent通过model指定模型，tools指定要调用的工具，以及system_prompt指定系统角色。
+- 代码中get_weather是一个函数，入参是一个字符串类型的city，它表示城市名称，返回值也是字符串类型，表示这个城市的天气情况，函数打印一行正在调用工具的信息，并总是返回任何城市的天气都是sunny。
+- agent通过invoke方法来触发行为，传入messages，该消息以用户角色，来对模型提问。
+
+在运行代码前，需要事先启动Ollama，并运行当前大模型。
+
+输出结果
+```text
+正在调用get_weather工具……
+[{'type': 'text', 'text': "It's always sunny in San Francisco!"}]
+正在调用get_weather工具……
+[{'type': 'text', 'text': "It's always sunny in San Francisco! Is there anything else you'd like to know about the weather there?"}]
+```
+
+如图：
+![Basic-Agent Result](/img/start/basic-agent-result.png)
+
+输出说明：
+- 代码中两次调用了模型，对于同样的输入，输出结果并不一定是完全相同的。
+- agent调用了get_weather工具，这首先是因为qwen2.5:3b-instruct大模型有调用工具的能力。
+
+
+## 构建一个真实世界的Agent
+在下面的示例中，将构建一个可以回答有关文本文件的问题的研究代理。在此过程中，将探索以下概念：
+- 详细的系统提示更好的代理行为
+- 创建与外部数据集成的工具
+- 为一致响应建模配置
+- 会话记忆用于类似聊天的互动
+- 内置功能的深度代理（Deep Agents）
+- 测试代理
+
+### 安装依赖包
+后面创建Agent时，会用deep代理，deep代理具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
+可通过如下命令进行安装。
+<Tabs>
+  <TabItem value="pip" label="pip" default>
+    ```bash
+    pip install -U deepagents
+    ```
+  </TabItem>
+  <TabItem value="uv" label="uv">
+
+  </TabItem>
+</Tabs>
+
+
+### 定义系统提示
+
+
+```python
+SYSTEM_PROMPT = """You are a literary data assistant.
+
+## Capabilities
+
+- `fetch_text_from_url`: loads document text from a URL into the conversation.
+Do not guess line counts or positions—ground them in tool results from the saved file."""
+```
+
+这是一段Python代码，首先指定了系统角色是一个文字数据助理，并给定了fetch_text_from_url的能力，它从一个URL中获取文本加载到会话中。
+
+### 创建工具
+
+创建一个从url获取文本的工具。代码如下：
+
+```python
+from langchain.tools import tool
+import urllib.error
+import urllib.request
+
+@tool
+def fetch_text_from_url(url: str) -> str:
+    """Fetch the document from a URL.
+    """
+
+    print("正在调用fetch_text_from_url工具……")
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; quickstart-research/1.0)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+    except urllib.error.URLError as e:
+        return f"Fetch failed: {e}"
+    text = raw.decode("utf-8", errors="replace")
+    print("获取的文本样例：" + text[1:min(50, len(text))])
+
+    return text
+```
+
+例如URL：
+```url
+https://www.gutenberg.org/files/64317/64317-0.txt
+```
+
+获取的文本如图：
+
+![URL Text](/img/start/url-text.png)
+
+
+### 配置模型
+
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model(
+    model="qwen2.5:3b-instruct",
+    model_provider="ollama",
+    temperature=0.5,
+    timeout=600,
+    max_tokens=25000,
+    streaming=True,
+)
+```
+
+- model="qwen2.5:3b-instruct"
+  - 含义：指定你要使用的具体大模型名称。
+  - 说明：这里使用的是通义千问团队发布的 Qwen2.5 指令微调版本，模型参数量为 3B（30亿参数）。该模型通常用于轻量级的本地部署，适合个人电脑运行。
+- model_provider="ollama"
+  - 含义：指定模型的底层服务提供商（Provider）。
+  - 说明：ollama 是一个非常流行的本地大模型运行与部署工具。这里告知 LangChain 通过本地启动的 Ollama 后台服务来发送请求，而不是通过 OpenAI 或阿里云的云端 API。
+- temperature=0.5
+  - 含义：控制模型生成文本的随机性（温度）。
+  - 说明：取值范围通常为 0.0 到 1.0（甚至 2.0）。
+    - 0.0：输出最保守、最确定的结果。
+    - 0.5：平衡模式。模型在保持答案准确性的同时，具备一定的灵活性，适合大多数日常问答和代码生成任务。
+    - 1.0：输出最天马行空、创造性最强，但可能容易出现幻觉。
+- timeout=600
+  - 含义：API 请求的超时时间，单位为秒（s）。
+  - 说明：这里设置为 600 秒（即 10 分钟）。因为本地硬件算力有限，生成较长文本耗时较久，设置较长的超时时间可以有效防止程序在等待模型生成时因网络或系统限制而被强行中断。
+- max_tokens=25000
+  - 含义：限制模型单次回复能生成的最大 Token（令牌）数量。
+  - 说明：大模型输出受限于上下文窗口。设置该值是为了防止模型输出过长的无效文本，或者用于适配你的应用程序对回复长度的要求。
+- streaming=True
+  - 含义：开启流式输出模式。
+  - 说明：默认情况下，模型生成完所有文字后才会一次性返回结果。开启流式输出后，模型会像打字机一样，生成一个字（Token）就传回一个字。这在开发 Web 聊天界面或终端交互时非常重要，能够极大地减少用户的等待焦虑感。
+
+### 添加记忆
+向Agent添加记忆以跨交互维护状态。允许Agent记住以前的对话和上下文。
+
+这里以添加内存方式的记忆为例。代码如下：
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+checkpointer = InMemorySaver()
+```
+
+在生产环境中，使用持久性checkpointer将消息历史记录保存到数据库中。
+
+### 创建代理
+创建代理有两种不同的框架：LangChain代理和deep代理。LangChain和deep代理都提供了对工具、内存等的细粒度控制。两者之间的主要区别在于，
+deep代理具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
+
+两种方式创建Agent代码如下：
+```python
+from langchain.agents import create_agent
+from deepagents import create_deep_agent
+
+agent = create_agent(
+    model=model,
+    tools=[fetch_text_from_url],
+    system_prompt=SYSTEM_PROMPT,
+    checkpointer=checkpointer,
+)
+
+deep_agent = create_deep_agent(
+    model=model,
+    tools=[fetch_text_from_url],
+    system_prompt=SYSTEM_PROMPT,
+    checkpointer=checkpointer,
+)
+```
+
+单从代码形式上看，两者并无区别。
+
+### 代理执行
+
+代码如下：
+```python
+content = f"""Project Gutenberg hosts a full plain-text copy of F. Scott Fitzgerald's The Great Gatsby.
+URL: https://www.gutenberg.org/files/64317/64317-0.txt
+
+Answer as much as you can:
+
+1) How many lines in the complete Gutenberg file contain the substring `Gatsby` (count lines, not occurrences within a line, each line ends with a line break).
+2) The 1-based line number of the first line in the file that contains `Daisy`.
+3) A two-sentence neutral synopsis.
+
+Do your best on (1) and (2). If at any point you realize you cannot **verify** an exact answer with
+your available tools and reasoning, do not fabricate numbers: use `null` for that field and spell out
+the limitation in `how_you_computed_counts`. If you encounter any errors please report what the error was and what the error message was."""
+
+print("Running create_agent...", flush=True)
+agent_result = agent.invoke(
+    input={"messages": [{"role": "user", "content": content}]},
+    config={"configurable": {"thread_id": "great-gatsby-lc"}},
+)
+print("\ncreate_agent:")
+print(agent_result["messages"][-1].content_blocks)
+
+print("Running create_deep_agent...", flush=True)
+deep_agent_result = deep_agent.invoke(
+    input={"messages": [{"role": "user", "content": content}]},
+    config={"configurable": {"thread_id": "great-gatsby-da"}},
+)
+print("\ncreate_deep_agent:")
+print(deep_agent_result["messages"][-1].content_blocks)
+```
+代码说明：
+- content中给出了URL地址，Agent回答三个问题，以及回答规范。
+- 这里的 thread_id 是 LangGraph 会话线程 ID，用来标识“这一轮对话属于哪个独立会话”。它的作用是：
+  - 同一个 thread_id：多次调用 agent.invoke 时，Agent 会加载这个线程的历史状态，从而实现多轮对话记忆。
+  - 不同 thread_id：会话完全隔离，不会互相影响。
+  - 前提条件：只有在创建 Agent 或编译图时传入了 checkpointer，thread_id 才会真正生效。
+
+
+运行结果如下：
+```
+Running create_agent...
+正在调用fetch_text_from_url工具……
+正在调用fetch_text_from_url工具……
+正在调用fetch_text_from_url工具……正在调用fetch_text_from_url工具……
+
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+
+create_agent:
+[{'type': 'text', 'text': 'The text provided is a literary excerpt from F. Scott Fitzgerald\'s novel "The Great Gatsby." The passage captures the main character Nick Carraway\'s experiences and thoughts during a significant period in the novel. Here are the key points:\n\n1. **Nick\'s Return to the East**: The excerpt begins with Nick deciding to return home after Gatsby\'s death, indicating that he no longer feels at home in the Eastern part of the United States. \n\n2. **Gatsby and the East**: Nick reflects on the East as a place that distorts his perception, with its Eastern customs and lifestyle. He describes it as a night scene by El Greco, suggesting a surreal and distorted view of the East.\n\n3. **Nick\'s Encounter with Jordan Baker**: During his return, Nick meets Jordan Baker, whom he had been involved with earlier. Jordan reveals she is engaged, which causes Nick to question their relationship. The conversation between them highlights the complexity of their past and their current situation.\n\n4. **Tom Buchanan\'s Encounter**: Later, Nick encounters Tom Buchanan, who is clearly troubled by his past actions, particularly his involvement with Myrtle Wilson. Tom reveals he told Wilson the truth about Gatsby\'s car, which led to his death. Tom\'s account of his own suffering further emphasizes the theme of guilt and regret.\n\n5. **Gatsby\'s House**: Nick visits Gatsby\'s house, noticing the graffiti on its steps, which he erases. He then sits on the beach, contemplating the old, unknown world and Gatsby\'s dreams.\n\n6. **Gatsby\'s Green Light**: Nick reflects on Gatsby\'s obsession with the green light at Daisy\'s dock. He muses on Gatsby\'s belief in the "green light," referring to the future that eludes him, symbolizing Gatsby\'s unfulfilled dreams and his longing for the past.\n\n7. **The Symbolism**: The text ends with a metaphorical description of the characters\' relentless journey towards the past, symbolizing the futility of their actions and the inevitability of their pasts catching up with them.\n\nOverall, the excerpt provides a glimpse into the emotional and psychological states of the characters and their relationship to the setting of the novel, particularly the contrast between the East and the West.'}]
+Running create_deep_agent...
+正在调用fetch_text_from_url工具……
+正在调用fetch_text_from_url工具……
+正在调用fetch_text_from_url工具……
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+获取的文本样例：** START OF THE PROJECT GUTENBERG EBOOK 64317 ***
+正在调用fetch_text_from_url工具……
+
+create_deep_agent:
+[{'type': 'text', 'text': "It looks like there was an issue with fetching the text from the URL due to a certificate verification error. Could you please provide the URL you would like to fetch the text from? I'll ensure to fetch the text from the URL you provide."}]
+```
+
+### 跟踪Agent调用
+
+LangChain可以使用LangSmith来跟踪和监控。
+访问[LangSmith](https://smith.langchain.com/)，注册一个账号。注册登录后如图：
+![LangSmith Page](/img/start/langsmith-page.png)
+
+
+依次点击Settings->Create API Key，创建一个API Key，如图：
+![API Key](/img/start/api-key.png)
+
+注意，API Key只显示一次，请将其保存到其它安全的地方，以备后续使用。如果忘记，可重新创建。
+
+跟踪Agent调用，只需在代码开始的位置配置一些选项，代码如下：
+```python
+import os
+
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_API_KEY"] = "lsv2_pt_dc****aa"
+```
+
+注：Agent ID 必须符合格式：1 到 63 个字符，只能包含小写 ASCII 字母、数字或连字符 -，必须以字母开头，并以字母或数字结尾。
