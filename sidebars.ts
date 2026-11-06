@@ -25,7 +25,12 @@ const sidebars: SidebarsConfig = {
       collapsible: true, // 设为 true 可折叠
       items: ['start/install', 'start/quick_start'],
     },
-
+    {
+      type: 'category',
+      label: '核心组件',
+      collapsible: true, // 设为 true 可折叠
+      items: ['core-components/agents/overview','core-components/models/models'],
+    },
 
   ],
    

@@ -1,0 +1,267 @@
+---
+sidebar_position: 1
+---
+
+# 模型
+LLM（大语言模型，Large Language Model）是强大的人工智能工具，可以像人类一样解释和生成文本。他们足够多才多艺，可以写内容、翻译语言、总结和回答问题，而不需要针对每个任务进行专门的培训。
+
+除了文本生成，许多模型还支持：
+- 工具调用（Tool calling）：调用外部工具（如数据库查询或API调用）并在其响应中使用结果。
+- 结构化输出（Structured output）：其中模型的响应被限制为遵循已定义的格式。
+- 多模态性（Multimodality）：处理和返回文本以外的数据，如图像、音频和视频。
+- 推理（Reasoning）：模型执行多步推理来得出结论。
+
+Model是Agent的推理引擎。它们驱动Agent的决策过程，决定调用哪个工具，如何解释结果，以及何时提供最终答案。
+
+选择的Model的质量和功能直接影响Agent的基线可靠性和性能。不同的Model擅长于不同的任务——有些更擅长于遵循复杂的指令，有些擅长结构化推理，有些支持更大的上下文窗口来处理更多的信息。
+
+LangChain的标准模型接口可以访问许多不同的提供商集成，这使得在模型之间进行试验和切换以找到最适合用例的模型变得容易。
+
+模型可以以两种方式使用：
+- 与Agent一起使用——在创建Agent时可以动态指定模型。
+- 独立使用——模型可以被直接调用来完成文本生成、分类或提取等任务，而不需要Agent框架。
+
+相同的模型接口可以在两种上下文中工作，这使得可以灵活地根据需要从简单的工作流开始，然后扩展到更复杂的基于代理的工作流。
+
+
+## 初始化模型
+
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model(model="ollama:qwen2.5:7b")
+response = model.invoke(input="Why do parrots talk?")
+print(response)
+```
+代码说明：
+- 通过langchain.chat_models的init_chat_model初始化模型，传入参数名为model，值为一个字符串，对于Ollama提供商的模型需要显示写ollama。
+- 初始化好的model，通过invoke触发模型行为，模型返回结果为response。
+
+
+输出结果：
+```
+content='Parrots talk for several reasons, primarily related to their social and communicative nature. Here are some key reasons:\n\n1. **Communication and Bonding**: Parrots mimic human speech to communicate with their owners or other parrots. Mimicking sounds, including words and phrases, helps them bond with their flock or human companions.\n\n2. **Learning and Imprinting**: Young parrots learn by imitating their environment. If they are in a home with people, they will often mimic human speech. This is a form of imprinting, where the parrot learns to recognize and mimic human voices.\n\n3. **Stimulation and Entertainment**: Talking can be a way for parrots to entertain themselves and engage in activities that keep them mentally stimulated. Parrots are intelligent birds and require mental stimulation to prevent boredom and potential behavioral issues.\n\n4. **Attention and Interaction**: Parrots often mimic sounds to gain attention from their owners or to initiate interactions. They may use vocalizations to get their owners to pay attention to them, much like a dog might bark to get a response.\n\n5. **Expressing Emotions**: Parrots can use vocalizations to express a range of emotions, such as happiness, frustration, or displeasure. Mimicking specific words or phrases can be a way for them to express their feelings.\n\n6. **Social Interaction**: In the wild, parrots often use vocalizations to communicate with their flock members. Domesticated parrots may mimic human speech as a way to communicate with their human companions.\n\nUnderstanding why parrots talk can help owners provide the right environment and training to keep their pets happy and healthy.' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-05T12:29:32.7854819Z', 'done': True, 'done_reason': 'stop', 'total_duration': 9471836100, 'load_duration': 2665145600, 'prompt_eval_count': 35, 'prompt_eval_duration': 45490000, 'eval_count': 326, 'eval_duration': 6751645000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1abaf-6def-7435-afc5-632cdbe1f5b7-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 35, 'output_tokens': 326, 'total_tokens': 361}
+```
+
+
+LangChain通过专门的集成包支持所有主要的模型提供商。每个提供商包实现相同的标准接口，因此可以在不重写应用程序逻辑的情况下交换提供商。
+新的模型名可以立即工作——不需要更新LangChain——因为提供商包将模型名直接传递给提供商的API。
+
+聊天模型接受可用于配置其行为的参数。支持的完整参数集因模型和提供商而异，但标准参数包括：
+- model
+  - 参数类型：string，是否必须：是。
+  - 含义：与提供商一起使用的特定模型的名称或标识符。可以使用“:”格式在单个参数中指定模型及其提供商，例如“openai:o1”。
+- api_key
+  - 参数类型：string，是否必须：否。
+  - 含义：与模型的提供商进行身份验证所需的密钥。这通常是在注册访问模型时发出的。通常通过设置环境变量来访问。对于Ollama，无需api_key。
+- temperature
+  - 参数类型：number，是否必须：否。
+  - 含义：控制模型输出的随机性。数字越高，回答越有创意；较低的值使它们更具确定性。
+- max_tokens
+  - 参数类型：number，是否必须：否。
+  - 含义：限制响应中的token总数，有效地控制输出的长度。
+- timeout
+  - 参数类型：number，是否必须：否。
+  - 在取消请求之前等待模型响应的最大时间（以秒为单位）。对于不可靠的网络，可适当增大该参数的值。
+- max_retries
+  - 参数类型：number，是否必须：否，默认值：6。
+  - 含义：如果由于网络超时或速率限制等问题导致请求失败，系统将尝试重新发送请求的最大次数。重试使用带抖动的指数回退。网络错误、速率限制（429）和服务器错误（5xx）会自动重试。
+  客户端错误401（未授权）或404等不会重试。对于不可靠网络上长时间运行的代理任务，请考虑将此值增加到10-15。
+
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model(
+    model="ollama:qwen2.5:7b",
+    temperature=0.7,
+    timeout=30,
+    max_tokens=1000,
+    max_retries=6,  # Default; increase for unreliable networks
+)
+response = model.invoke(input="Why do parrots talk?")
+print(response)
+```
+
+输出结果：
+```
+content='Parrots talking is a fascinating aspect of their behavior, and there are several reasons why they do it:\n\n1. **Imitation and Learning**: Parrots are highly intelligent birds and have a natural inclination to mimic sounds they hear in their environment. This mimicking behavior can include human speech. It’s a way for them to learn and integrate sounds into their vocal repertoire.\n\n2. **Social Interaction**: Parrots are social animals and often use vocalizations to communicate with their flock or human companions. Talking can be a way for them to engage and interact with others, much like how humans use language to communicate and build relationships.\n\n3. **Stimulation and Entertainment**: Vocalization can be a form of self-stimulation and entertainment for parrots. It can also be a way to express themselves when they are bored or seeking attention.\n\n4. **Bonding**: When parrots are kept as pets, talking can be a way to form a bond with their human caretakers. It’s a form of interaction that can strengthen the relationship between the parrot and its owner.\n\n5. **Environmental Cues**: Parrots may also vocalize in response to specific environmental cues, such as the sound of a door closing or the start of a routine (like mealtime).\n\nWhile parrots can learn to mimic a wide range of sounds, including words and phrases, their ability to understand the meaning of the words they repeat is limited. Nonetheless, their vocal abilities can provide a lot of enjoyment and companionship for their owners.' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-05T13:17:58.246514Z', 'done': True, 'done_reason': 'stop', 'total_duration': 9189107200, 'load_duration': 2388225000, 'prompt_eval_count': 35, 'prompt_eval_duration': 41861000, 'eval_count': 305, 'eval_duration': 6747194000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1abdb-c47e-77b4-80d3-01e9d151c604-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 35, 'output_tokens': 305, 'total_tokens': 340}
+```
+
+## 调用模型
+
+
+必须调用模型来生成输出。有三种主要的调用方法，它们分别是invoke()，stream()，batch()。每种方法适用于不同的用例。
+
+### Invoke
+调用模型最直接的方法是对单个消息（Message）或消息列表使用invoke()方法。在前面章节已经演示过。
+可以向模型提供消息列表，以表示会话历史记录。每个消息都有一个角色，模型使用该角色来指示谁在对话中发送了消息。
+
+代码如下：
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model(model="ollama:qwen2.5:7b")
+
+response = model.invoke(input="Why do parrots have colorful feathers?")
+print("response of single message:\n", response)
+
+conversation = [
+    {"role": "system", "content": "You are a helpful assistant that translates English to French."},
+    {"role": "user", "content": "Translate: I love programming."},
+    {"role": "assistant", "content": "J'adore la programmation."},
+    {"role": "user", "content": "Translate: I love building applications."}
+]
+
+response = model.invoke(input=conversation)
+print("response of message list:\n",response)  # AIMessage("J'adore créer des applications.")
+
+from langchain.messages import HumanMessage, AIMessage, SystemMessage
+
+conversation = [
+    SystemMessage("You are a helpful assistant that translates English to French."),
+    HumanMessage("Translate: I love programming."),
+    AIMessage("J'adore la programmation."),
+    HumanMessage("Translate: I love building applications.")
+]
+
+response = model.invoke(input=conversation)
+print("response of message list using Message Object:\n",response)  # AIMessage("J'adore créer des applications.")
+```
+
+代码说明：
+- 第一个conversation是一个Json列表，每个Json指定了角色role和内容content，role有system、user和assistant。
+  - system（系统）：给模型设定“人设”或“全局规则”。它通常放在对话的最开头，用来告诉模型它的身份是什么、应该遵循什么指令。比如你例子中的 "You are a helpful assistant that translates English to French."，就是告诉 AI：“你是一个负责把英文翻译成法文的助手”，这样 AI 之后的所有回复都会围绕这个设定展开。
+  - user（用户）：代表你（也就是发起对话的人）。用户向模型发送消息，比如 "Translate: I love programming." 就是你向模型发出的具体指令。
+  - assistant（助手）：代表模型之前已经回复过的内容。它的作用是提供“上下文”，让模型知道之前的对话进展到了哪一步，从而能更连贯地回答后续问题。比如你例子中 AI 回复了 "J'adore la programmation."，这条记录就会被标记为 assistant。
+  简单来说，system 定规矩，user 提问题，assistant 记回答。
+- 第二个conversation使用了LangChain内置的消息对象：SystemMessage、HumanMessage和AIMessage，分别对应第一个conversation的system、user和assistant三个角色，两个conversation是等价的。后面章节将详细介绍Message。
+- 三种方式均可通过invoke()方法的input参数传入来调用模型。
+- invoke()返回的是一个AIMessage对象。
+
+输出结果：
+```
+response of single message:
+ content="Parrots have colorful feathers as a result of the evolutionary process and for several practical purposes:\n\n1. **Attracting Mates**: Bright colors can be an indicator of good health and genetic quality. In many species of parrots, males are particularly colorful as a way to attract females. Females, on the other hand, may have less vibrant colors to reduce their visibility to predators while nesting.\n\n2. **Camouflage**: Some parrot species have coloration that helps them blend into their environment, making it easier for them to catch prey or avoid predators. For example, some parrot species have green feathers, which can help them hide among the leaves of trees.\n\n3. **Warning Signals**: Bright colors can also serve as warning signals. Some parrots have bright red or yellow feathers as a signal to potential predators that they are toxic or distasteful.\n\n4. **Territorial Markers**: Bright colors can help parrots mark their territory. They may use visual cues to communicate the boundaries of their space to other birds.\n\n5. **Communication**: Color can also play a role in communication among parrots. They may use their colors to signal different emotions or states, such as aggression or contentment.\n\n6. **Species Identification**: Bright colors can help parrots recognize members of their own species, which is important for social interactions and breeding.\n\nThe specific colors and patterns of parrots' feathers are the result of a combination of these factors, and they can vary greatly among the many species of parrots." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T00:42:18.0338056Z', 'done': True, 'done_reason': 'stop', 'total_duration': 6739358600, 'load_duration': 15080500, 'prompt_eval_count': 37, 'prompt_eval_duration': 253847000, 'eval_count': 307, 'eval_duration': 6457359000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1ae4e-53dd-73b8-9bca-521a2922a49b-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 37, 'output_tokens': 307, 'total_tokens': 344}
+response of message list:
+ content="J'adore construire des applications." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T00:42:18.2944177Z', 'done': True, 'done_reason': 'stop', 'total_duration': 258994300, 'load_duration': 19252300, 'prompt_eval_count': 55, 'prompt_eval_duration': 25213000, 'eval_count': 10, 'eval_duration': 186631000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1ae4e-6e33-710c-95e1-815f26a26c75-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 55, 'output_tokens': 10, 'total_tokens': 65}
+response of message list using Message Object:
+ content="J'adore développer des applications." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T00:42:18.5482459Z', 'done': True, 'done_reason': 'stop', 'total_duration': 248456200, 'load_duration': 36041700, 'prompt_eval_count': 55, 'prompt_eval_duration': 20895000, 'eval_count': 10, 'eval_duration': 182963000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1ae4e-6f39-74a8-a515-546da802e90d-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 55, 'output_tokens': 10, 'total_tokens': 65}
+```
+
+### Stream
+大多数模型可以在生成输出内容时流式传输输出内容。通过逐步显示输出，流式显著改善了用户体验，特别是对于较长的响应。
+
+调用stream()将返回一个迭代器Iterator[AIMessageChunk]，该迭代器在产生输出块时可以立即输出块。可以使用一个循环来实时处理每个块。
+
+代码如下：
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model(model="ollama:qwen2.5:7b")
+
+for chunk in model.stream("Why do parrots have colorful feathers?"):
+    print(chunk.text, end="|", flush=True)
+
+print("\n----------")
+full = None  # None | AIMessageChunk
+for chunk in model.stream("What color is the sky?"):
+    full = chunk if full is None else full + chunk
+    print(full.text, end="|\n")
+print("----------")
+if full:
+    print(full.content_blocks)
+```
+
+输出结果：
+```
+Par|rots| have| colorful| feathers| for| several| reasons|,| related| to| their| evolutionary| history|,| species| adaptation|,| and| social| behavior|:
+
+|1|.| **|Cam|ouflage| and| Cam|ouflage| Altern|atives|**:| While| some| par|rots| live| in| environments| where| their| colors| might| help| them| blend| into| the| background| (|like| the| rain|fore|sts| where| some| species| live|),| many| par|rots| are| brightly| colored|.| Bright| colors| can| sometimes| act| as| a| form| of| camouflage| in| other| ways|,| such| as| blending| with| d|app|led| sunlight| or| helping| to| avoid| detection| from| predators|.
+
+|2|.| **|Court|ship| and| Mate| At|traction|**:| Bright| colors| and| patterns| are| often| used| to| attract| mates|.| The| vivid| colors| can| signal| good| health| and| fitness| to| potential| mates|,| acting| as| a| form| of| sexual| selection|.| This| is| particularly| true| for| species| where| males| and| females| have| different| color|ation|.
+
+|3|.| **|Species| Identification| and| Social| Bond|ing|**:| Bright| colors| can| also| help| birds| recognize| members| of| their| own| species|.| In| par|rots|,| visual| signals| can| be| important| for| social| interactions|,| such| as| forming| f|locks|,| maintaining| group| cohesion|,| and| recognizing| individuals|.
+
+|4|.| **|Terr|itor|ial| Mark|ing|**:| Bright| colors| can| serve| as| a| way| to| mark| territory| or| display| dominance|.| Some| par|rots| use| their| colors| to| establish| or| maintain| boundaries|.
+
+|5|.| **|Ev|olution|ary| Adapt|ation|**:| The| bright| colors| of| par|rots| can| be| a| result| of| evolutionary| adaptations| to| specific| environments| or| ecological| nich|es|.| For| example|,| some| par|rots| may| have| evolved| bright| colors| to| be| more| visible| to| their| prey| or| to| signal| to| other| species| in| a| way| that| benefits| their| survival|.
+
+|6|.| **|P|reen|ing| and| Fe|athers|**:| The| structure| and| pig|mentation| of| par|rot| feathers| contribute| to| their| vibrant| colors|.| Fe|athers| are| not| just| for| flight|;| they| also| play| a| role| in| therm|ore|g|ulation|,| waterproof|ing|,| and| display|.
+
+|In| summary|,| the| colorful| feathers| of| par|rots| serve| multiple| purposes|,| from| attracting| mates| and| identifying| species| to| serving| as| a| form| of| communication| and| adaptation| to| their| environment|.|||
+----------
+The|
+The color|
+The color of|
+The color of the|
+The color of the sky|
+......
+The color of the sky can vary depending on the time of day, weather conditions, and other factors. Generally, during a clear day, the sky appears blue due to a phenomenon called Rayleigh scattering, where shorter, blue wavelengths of light are scattered more by the Earth's atmosphere. However, the sky can also appear white, gray, or even take on other colors like orange or pink during sunrise or sunset due to the way the sun's light is scattered by the atmosphere at these times. Clouds can also make the sky appear white or gray, and during nighttime, the sky appears black unless there is light pollution or visible stars.|
+----------
+[{'type': 'text', 'text': "The color of the sky can vary depending on the time of day, weather conditions, and other factors. Generally, during a clear day, the sky appears blue due to a phenomenon called Rayleigh scattering, where shorter, blue wavelengths of light are scattered more by the Earth's atmosphere. However, the sky can also appear white, gray, or even take on other colors like orange or pink during sunrise or sunset due to the way the sun's light is scattered by the atmosphere at these times. Clouds can also make the sky appear white or gray, and during nighttime, the sky appears black unless there is light pollution or visible stars."}]
+```
+
+代码说明：
+- chunk的类型是AIMessageChunk，通过text来输出文本内容，从结果来看chunk的内容可以是一个或者多个token，这里是一个token，或者token前有个空格。一个完整的单词Parrots，
+可以分多个token输出，例如Parrots，分为Par和rots。
+- 输出结果太长，有部分内容使用省略号代替。
+
+
+
+### Batch
+将一组独立的请求作为一个批（Batch）发送到一个模型中可以显著提高性能并降低成本，因为处理可以并行完成。
+可以通过调用batch()来实现。
+
+默认情况下，batch()将只返回整个批处理的最终输出。
+如果想在每个单独的输入完成生成时接收输出，可以使用batch_as_completed()对结果进行流处理。
+
+当使用batch_as_completed()时，结果可能会乱序到达。每个都包含用于匹配的输入索引，以便根据需要重建原始顺序。
+
+代码如下：
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.runnables import RunnableConfig
+
+model = init_chat_model(model="ollama:qwen2.5:7b")
+
+responses = model.batch(inputs=[
+    "Why do parrots have colorful feathers?",
+    "How do airplanes fly?",
+    "What is quantum computing?"
+],config=RunnableConfig(max_concurrency=5))
+for response in responses:
+    print(response)
+
+for response in model.batch_as_completed([
+    "Why do parrots have colorful feathers?",
+    "How do airplanes fly?",
+    "What is quantum computing?"
+]):
+    print(response)
+```
+
+
+输出结果：
+```
+content="Parrots have colorful feathers for several reasons, primarily related to their evolutionary history, communication, and social behavior:\n\n1. **Camouflage and Protection**: While parrots generally don't use their colors for camouflage in the way some birds do, their vibrant plumage can sometimes help them blend into their surroundings, especially when perched on branches with similar colors.\n\n2. **Communication and Attraction**: Bright colors in parrots are often used for communication, attracting mates, and signaling to other members of their species. For example, males often have more vibrant colors to attract females, and colorful displays during courtship can be a significant part of their mating rituals.\n\n3. **Social Signals**: The colors can also be used to convey messages about their mood or state of health to other parrots. For instance, a sick parrot might display duller colors, indicating to others that it needs attention or care.\n\n4. **Territorial Markers**: In some species, bright colors can also serve as territorial markers, helping parrots establish and maintain their territory against other birds.\n\n5. **Evolutionary Adaptation**: The bright colors of parrots are a result of evolutionary adaptation. Over time, those with more vibrant colors may have had a better chance of attracting mates or deterring predators, leading to the development of the colorful plumage we see today.\n\n6. **Species Identification**: Bright colors can also help birds identify members of their own species. Different species of parrots often have distinct color patterns that help them recognize one another, which can be crucial in environments where they might encounter multiple species.\n\nIt's important to note that not all parrots are brightly colored; some species have more subdued plumage, which can be adapted to their specific environments or roles." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T05:05:21.4925939Z', 'done': True, 'done_reason': 'stop', 'total_duration': 9575956900, 'load_duration': 2330129200, 'prompt_eval_count': 37, 'prompt_eval_duration': 39759000, 'eval_count': 355, 'eval_duration': 7196750000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1af3f-1eea-74a3-89df-2b5ddcdb6fbb-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 37, 'output_tokens': 355, 'total_tokens': 392}
+content="Airplanes can fly thanks to the principles of aerodynamics, which involve the relationship between the airplane and the air it moves through. There are several key factors that contribute to an airplane's ability to stay in the air and travel through the sky, including lift, drag, thrust, and weight. Here's a breakdown of how these elements work together:\n\n1. **Lift**: This is the force that acts perpendicular to the direction of the airflow. For an airplane to fly, lift must be greater than the airplane's weight. The shape of an airplane's wings, known as an airfoil, is crucial for generating lift. As air flows over the wing, it moves faster over the curved top surface than the bottom, creating an area of low pressure above and high pressure below the wing. This pressure difference results in a net upward force, known as lift.\n\n2. **Drag**: This is the resistance of the air to the airplane's motion. While drag opposes lift, it is also necessary for the airplane to move through the air. The shape of the airplane and its streamlined design are designed to minimize drag.\n\n3. **Thrust**: This is the force that propels the airplane forward. Engines provide thrust. For a fixed-wing airplane, thrust is generated by jet engines or propellers. The thrust must be equal to or greater than the drag to allow the airplane to maintain or increase its speed.\n\n4. **Weight**: This is the force exerted on the airplane due to gravity. To overcome the force of gravity, the lift generated by the wings must be sufficient to counterbalance the weight of the airplane.\n\nWhen these forces are balanced, the airplane can maintain level flight. For a plane to ascend, the lift must be greater than the weight, and the thrust must be greater than the drag. Conversely, to descend, the lift is adjusted to be less than the weight, and the plane naturally falls under the influence of gravity.\n\nAdditionally, control surfaces on the wings, tail, and other parts of the airplane allow pilots to control pitch (up and down), roll (tilting to one side), and yaw (turning left and right) by manipulating these surfaces. These adjustments are crucial for maneuvering the plane through the air.\n\nUnderstanding these principles of flight and how they interact is fundamental to the design and operation of airplanes." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T05:05:40.4313323Z', 'done': True, 'done_reason': 'stop', 'total_duration': 28514695300, 'load_duration': 2333250300, 'prompt_eval_count': 34, 'prompt_eval_duration': 30009000, 'eval_count': 472, 'eval_duration': 9705330000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1af3f-1eea-74a3-89df-2b5ee1fe15bb-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 34, 'output_tokens': 472, 'total_tokens': 506}
+content="Quantum computing is a type of computing that uses the principles of quantum mechanics to perform operations on data. Unlike classical computers, which use bits (1s and 0s) to process information, quantum computers use quantum bits, or qubits. Qubits can exist not only in the states corresponding to 1 or 0, but also in any quantum superposition of these states. This property, along with others like entanglement and quantum tunneling, allows quantum computers to process certain types of problems much more efficiently than classical computers.\n\nHere are a few key points about quantum computing:\n\n1. **Superposition**: A qubit can be in multiple states at the same time. This means a quantum computer can perform many calculations at once, significantly speeding up certain computations.\n\n2. **Entanglement**: This is a phenomenon where qubits can become interlinked and the state of one (whether it's a 1 or 0) can depend on the state of another, even over large distances. This can be harnessed to increase the computational power of quantum computers.\n\n3. **Quantum Interference**: By adjusting the phases of qubits, the results of computing can be manipulated to be more likely to yield the desired outcome.\n\n4. **Quantum Decoherence**: One of the major challenges in quantum computing is maintaining the quantum state of qubits, as any interaction with the environment can cause decoherence, leading to errors in computation.\n\n5. **Quantum Algorithms**: These are algorithms specifically designed for quantum computers and can solve problems that are intractable for classical computers, such as certain types of optimization problems, factoring large numbers, and simulating quantum systems.\n\n6. **Current State**: While the technology is still in its early stages, companies like IBM, Google, and Alibaba Cloud are actively working on developing quantum computers. The first few quantum computers are relatively small and have limited practical applications, but they are expected to grow in both size and capability over time.\n\nQuantum computing has the potential to revolutionize fields such as cryptography, material science, drug discovery, and artificial intelligence, but it is still a nascent technology facing significant challenges in terms of development and practical application." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T05:05:30.6687611Z', 'done': True, 'done_reason': 'stop', 'total_duration': 18751612400, 'load_duration': 2331501700, 'prompt_eval_count': 34, 'prompt_eval_duration': 30982000, 'eval_count': 446, 'eval_duration': 9120750000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a1af3f-1eea-74a3-89df-2b5fea7a1959-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 34, 'output_tokens': 446, 'total_tokens': 480}
+(0, AIMessage(content="Parrots have colorful feathers for several reasons, which are adaptations that have evolved over millions of years. Here are a few key points:\n\n1. **Camouflage and Concealment**: Some parrots, particularly those living in dense forests, have evolved bright colors to blend into their surroundings. This helps them avoid predators.\n\n2. **Social and Sexual Signaling**: Bright colors can serve as visual signals for social and sexual interactions. For example, bright plumage can indicate good health and genetic fitness, which is attractive to potential mates. Males and females of many species display different colors to help each other identify members of their own species and to facilitate mating.\n\n3. **Communication**: Colorful feathers can also play a role in communication within a flock. Bright colors can signal to other parrots about the presence of food, mates, or danger.\n\n4. **Territorial Marking**: Bright colors can mark a parrot's territory, helping to deter other birds from encroaching.\n\n5. **Evolutionary Adaptation**: The bright colors of parrots are often the result of evolutionary processes. Over time, birds with more vibrant plumage may have had a survival advantage, leading to the prevalence of these colors in the species.\n\nThe exact reasons for the colorful feathers can vary depending on the species, but generally, these colors serve multiple purposes in the natural world.", additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T05:05:46.2061453Z', 'done': True, 'done_reason': 'stop', 'total_duration': 5767985000, 'load_duration': 38662500, 'prompt_eval_count': 37, 'prompt_eval_duration': 29842000, 'eval_count': 277, 'eval_duration': 5660165000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1af3f-8e55-7626-a2fc-a6990a4ebcee-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 37, 'output_tokens': 277, 'total_tokens': 314}))
+(1, AIMessage(content="Airplanes fly through a combination of several key principles, primarily involving aerodynamics. Here are the main concepts that enable an airplane to fly:\n\n1. **Lift**: Lift is the force that pushes the airplane upward against the force of gravity. It is generated by the wings, which are designed with an airfoil shape. As air flows over the wing, it moves faster over the curved top surface than the flat bottom surface. This difference in speed creates a pressure difference, with lower pressure above the wing and higher pressure below. This pressure difference results in an upward force called lift.\n\n2. **Thrust**: Thrust is the force that propels the airplane forward. It is generated by the engines, which can be jet engines, propellers, or a combination of both. The engines push air rearward, which in turn pushes the airplane forward.\n\n3. **Weight**: Weight is the force of gravity pulling the airplane downward. It is the mass of the airplane and its contents (fuel, passengers, cargo) multiplied by the gravitational acceleration.\n\n4. **Drag**: Drag is the force that resists the motion of the airplane through the air. It acts in the direction opposite to the airplane's motion and can be broken down into two main components: parasitic drag (which is caused by friction and shape) and induced drag (which is a result of generating lift).\n\n5. **Angle of Attack**: The angle of attack is the angle between the wing and the oncoming air. As the angle of attack increases, the lift generated by the wing also increases, but only up to a point. Too high an angle of attack can result in the wing stalling, where the airflow over the wing separates, and lift is lost.\n\n6. **Control Surfaces**: Airplanes are equipped with various control surfaces, such as flaps, ailerons, elevators, and rudders, which are used to manipulate the lift, drag, and thrust to control the airplane's flight path.\n\nFor an airplane to fly, it must generate enough lift to counteract its weight and enough thrust to overcome drag and propel it forward. Pilots control these forces through the use of the airplane's controls, ensuring that the airplane remains stable and on course.", additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T05:05:55.5972323Z', 'done': True, 'done_reason': 'stop', 'total_duration': 15156731900, 'load_duration': 61548500, 'prompt_eval_count': 34, 'prompt_eval_duration': 29599000, 'eval_count': 455, 'eval_duration': 9334490000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1af3f-8e56-77dc-9e14-cc945d476403-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 34, 'output_tokens': 455, 'total_tokens': 489}))
+(2, AIMessage(content='Quantum computing is a type of computing that uses quantum-mechanical phenomena, such as superposition and entanglement, to perform operations on data. In classical computers, information is processed using bits, which can represent either a 0 or a 1. Quantum computers use quantum bits, or qubits, which can exist in multiple states simultaneously, allowing quantum computers to perform many calculations at once.\n\nThis fundamental difference allows quantum computers to potentially solve certain types of problems much faster than classical computers. For example, factorizing large numbers, which is a task that would take a classical computer an impractical amount of time, could be done much more quickly on a quantum computer. Quantum computers are particularly well-suited for tasks involving complex systems or vast amounts of data, such as simulating chemical reactions, optimizing large-scale systems, and potentially breaking certain types of cryptographic codes.\n\nHowever, quantum computing is still in its early stages, and there are significant technical challenges to overcome before it can be widely applied. These challenges include the high error rates of qubits and the difficulty of maintaining qubits in a stable state, known as coherence. Despite these challenges, there is a great deal of interest in quantum computing due to its potential to revolutionize various fields of science and technology.', additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T05:06:00.8961755Z', 'done': True, 'done_reason': 'stop', 'total_duration': 20455149700, 'load_duration': 77880300, 'prompt_eval_count': 34, 'prompt_eval_duration': 30030000, 'eval_count': 256, 'eval_duration': 5232557000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1af3f-8e57-70f3-ae5f-d4e1d01ee799-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 34, 'output_tokens': 256, 'total_tokens': 290}))
+```
+
+代码说明：
+- batch_as_completed()的返回结果中带有索引号，例如0,1,2,。它们分别表示输入的索引号。
+- 当使用batch()或batch_as_completed()处理大量输入时，可以通过在Runnablecconfig中设置max_concurrency属性来控制并行调用的最大数量。
+
+
+## 工具调用
+模型可以请求调用执行任务的工具，例如从数据库中获取数据、搜索web或运行代码。工具由如下两部分组成：
+- 模式：包括工具的名称、描述，或参数定义（通常是JSON模式）。
+- 要执行的函数或协同程序。
+
+注：用户可能听说过“函数调用”（Functiong Calling）这个术语。我们将此与“工具调用”（Tool Calling）互换使用。
+
+下面是用户和模型之间的基本工具调用流程：
+![Tool Calling Flow](/img/models/tool-calling-flow.png)

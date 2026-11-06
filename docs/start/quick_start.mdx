@@ -195,7 +195,7 @@ checkpointer = InMemorySaver()
 
 在生产环境中，使用持久性checkpointer将消息历史记录保存到数据库中。
 
-### 创建代理
+### 创建Agent
 创建代理有两种不同的框架：LangChain代理和deep代理。LangChain和deep代理都提供了对工具、内存等的细粒度控制。两者之间的主要区别在于，
 deep代理具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
 
@@ -221,7 +221,7 @@ deep_agent = create_deep_agent(
 
 单从代码形式上看，两者并无区别。
 
-### 代理执行
+### Agent执行
 
 代码如下：
 ```python
