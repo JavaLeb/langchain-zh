@@ -1,0 +1,30 @@
+---
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# 消息
+
+消息（Message）是LangChain中模型上下文的基本单元。它们表示模型的输入和输出，在与LLM交互时携带表示会话状态所需的内容和元数据。
+
+消息是包含以下内容的对象：
+- Role（角色）：标识消息类型（例如system、user）。
+- Content（内容）：表示消息的实际内容（如文本、图像、音频、文档等）。
+- Metadata（元数据）：可选字段，如响应信息、消息id和令牌使用情况。
+
+LangChain提供了一种标准的消息类型，可以跨所有模型提供商工作，从而确保无论调用哪个模型，行为都是一致的。
+
+
+
+## 基本使用
+
+消息有如下三种使用方式：
+
+文本提示词（Text prompt）
+
+Message prompt
+
+
+

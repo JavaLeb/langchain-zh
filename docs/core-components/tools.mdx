@@ -1,0 +1,206 @@
+# 工具
+工具（Tool）扩展了Agent所能做的事情——让它们获取实时数据、执行代码、查询外部数据库，并在真实世界采取行动。
+
+在底层，工具是可调用函数，它具有良好定义的输入和输出，这些输入和输出被传递给聊天模型。模型根据对话上下文决定何时调用工具，
+以及要提供哪些输入参数。
+
+## 创建工具
+
+
+### 基本定义
+创建工具最简单的方法是使用@tool装饰器。默认情况下，函数的docstring会成为工具的描述，帮助模型理解何时使用它。
+
+```python
+from langchain.tools import tool
+
+@tool
+def search_database(query: str, limit: int = 10) -> str:
+    """Search the customer database for records matching the query.
+
+    Args:
+        query: Search terms to look for
+        limit: Maximum number of results to return
+    """
+    return f"Found {limit} results for '{query}'"
+```
+
+代码说明：
+- 代码通过search_database函数来模拟搜索数据库。
+- 在函数上面通过@tool来声明函数是一个工具。
+- 类型提示是必需的，因为它们定义了工具的输入模式（Schema），例如query参数为字符串str类型，limit参数为正数int类型。
+另外，函数内部使用三个双引号给出的docstring应该是信息丰富且简洁的，以帮助模型理解工具的目的。
+
+
+### 自定义属性
+
+例如自定义工具名称和描述，代码如下：
+```python
+from langchain.tools import tool
+
+@tool("calculator", description="Performs arithmetic calculations. Use this for any math problems.")
+def calc(expression: str) -> str:
+    """Evaluate mathematical expressions."""
+    return str(eval(expression))
+
+print("calc name:",calc.name)
+print("calc desc:",calc.description)
+```
+
+输出结果：
+```
+calc name: calculator
+calc desc: Performs arithmetic calculations. Use this for any math problems.
+```
+
+
+### 模式定义
+
+上面的例子，工具的参数通过函数参数指定。模型有时候只能通过猜测来理解参数的含义。
+我们还可以通过@tool的args_schema来详细规范定义工具的参数。
+
+
+代码如下：
+```python
+from langchain.tools import tool
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class WeatherInput(BaseModel):
+    """Input for weather queries."""
+    location: str = Field(description="City name or coordinates")
+    units: Literal["celsius", "fahrenheit"] = Field(
+        default="celsius",
+        description="Temperature unit preference"
+    )
+    include_forecast: bool = Field(
+        default=False,
+        description="Include 5-day forecast"
+    )
+
+@tool(args_schema=WeatherInput)
+def get_weather(location: str, units: str = "celsius", include_forecast: bool = False) -> str:
+    """Get current weather and optional forecast."""
+    temp = 22 if units == "celsius" else 72
+    result = f"Current weather in {location}: {temp} degrees {units[0].upper()}"
+    if include_forecast:
+        result += "\nNext 5 days: Sunny"
+    return result
+```
+
+代码说明：
+- 代码中通过@tool(args_schema=WeatherInput)定义了工具get_weather的参数类型为WeatherInput。
+- WeatherInput有三个参数，分别是字符串类型的location、枚举类型的units和布尔类型的include_forecast。每个参数还给出了详细的描述，
+这方便模型来理解参数的含义，units只能取两个值celsius或fahrenheit，默认值为celsius。
+
+
+这样做的好处：
+- 参数自动校验
+  - 模型如果填了非法的值，Pydantic会在调用前拦截并报错，避免脏数据进函数。
+- 模型更容易理解
+  - Field(description=...) 和 Literal 类型约束会被序列化成 JSON Schema 传给模型，模型能更准确地生成正确参数。
+- Schema与实现分离
+  - args_schema 独立定义，函数签名可以灵活调整而不影响模型侧的参数描述。
+
+以下参数名称是保留的，不能用作工具参数。使用这些名称将导致运行时错误：
+- config
+  - 保留用于将RunnableConfig内部传递给工具。
+- runtime
+  - 为ToolRuntime参数保留（访问状态，上下文，存储）。
+
+工具定义好后，现在就可以使用它了。
+## 访问上下文
+当工具能够访问诸如对话历史记录、用户数据和持久内存之类的运行时信息时，它们是最强大的。本节介绍如何从工具中访问和更新这些信息。
+
+
+工具可以通过ToolRuntime参数访问运行时信息，该参数提供：
+
+
+
+### 短期记忆（State）
+
+
+
+### 长期记忆（Store）
+LangChain通过BaseStore来提供跨对话的持久存储。与state（短期记忆）不同，存储到store中的数据在以后的会话中仍然可用。
+
+通过runtime.store来访问。store使用namespace/key模式来组织数据，下面通过一段代码来演示store的使用：
+
+```python
+from langgraph.store.memory import InMemoryStore
+from langchain.agents import create_agent
+from langchain.tools import tool, ToolRuntime
+from langchain.chat_models import init_chat_model
+
+
+# Access memory
+@tool
+def get_user_info(user_id: str, runtime: ToolRuntime) -> str:
+    """Look up user info."""
+    store = runtime.store
+    user_info = store.get(("users",), user_id)
+
+    return str(user_info.value) if user_info else "Unknown user"
+
+
+# Update memory
+@tool
+def save_user_info(user_id: str, name: str, age: int, email: str, runtime: ToolRuntime) -> str:
+    """Save user info."""
+    store = runtime.store
+    store.put(("users",), user_id, {"name": name, "age": age, "email": email})
+
+    return "Successfully saved user info."
+
+
+model = init_chat_model(model="ollama:qwen2.5:7b")
+
+store = InMemoryStore()
+
+agent = create_agent(
+    model,
+    tools=[get_user_info, save_user_info],
+    store=store
+)
+
+# First session: save user info
+save_resp = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Save the following user: userid: abc123, name: Foo, age: 25, email: foo@langchain.dev"}]
+})
+print("save=", save_resp)
+print("save-message=",save_resp["messages"][-1].content)
+
+# Second session: get user info
+get_resp = agent.invoke({
+    "messages": [{"role": "user", "content": "Get user info for user with id 'abc123'"}]
+})
+print("get=", get_resp)
+print("get-message=",get_resp["messages"][-1].content)
+```
+
+输出结果：
+```
+save= {'messages': [HumanMessage(content='Save the following user: userid: abc123, name: Foo, age: 25, email: foo@langchain.dev', additional_kwargs={}, response_metadata={}, id='8819b66c-45a2-4fcd-967b-c3dfc88a743b'), AIMessage(content='', additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T09:35:08.7161675Z', 'done': True, 'done_reason': 'stop', 'total_duration': 1273475600, 'load_duration': 27034600, 'prompt_eval_count': 235, 'prompt_eval_duration': 211307000, 'eval_count': 48, 'eval_duration': 1027618999, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1b036-3eaf-750a-8c54-89949d8f6594-0', tool_calls=[{'name': 'save_user_info', 'args': {'user_id': 'abc123', 'name': 'Foo', 'age': 25, 'email': 'foo@langchain.dev'}, 'id': '37a91103-ea36-4d5a-976c-b5e6a0b04c81', 'type': 'tool_call'}], invalid_tool_calls=[], usage_metadata={'input_tokens': 235, 'output_tokens': 48, 'total_tokens': 283}), ToolMessage(content='Successfully saved user info.', name='save_user_info', id='45eddfa2-ab6e-4197-aea7-acd9be17d362', tool_call_id='37a91103-ea36-4d5a-976c-b5e6a0b04c81'), AIMessage(content='The user with the ID `abc123`, named Foo, age 25, and email `foo@langchain.dev` has been successfully saved.', additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T09:35:09.5369533Z', 'done': True, 'done_reason': 'stop', 'total_duration': 816654600, 'load_duration': 36597200, 'prompt_eval_count': 298, 'prompt_eval_duration': 41092000, 'eval_count': 34, 'eval_duration': 727543000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1b036-43af-7162-bab5-f49c2da5976e-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 298, 'output_tokens': 34, 'total_tokens': 332})]}
+save-message= The user with the ID `abc123`, named Foo, age 25, and email `foo@langchain.dev` has been successfully saved.
+get= {'messages': [HumanMessage(content="Get user info for user with id 'abc123'", additional_kwargs={}, response_metadata={}, id='6f29b009-2fb8-4bf2-85d8-8db1cc07ab20'), AIMessage(content='', additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T09:35:10.1644569Z', 'done': True, 'done_reason': 'stop', 'total_duration': 623955100, 'load_duration': 39450300, 'prompt_eval_count': 219, 'prompt_eval_duration': 31317000, 'eval_count': 25, 'eval_duration': 543247000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1b036-46e3-75f9-82d0-b482abfe414e-0', tool_calls=[{'name': 'get_user_info', 'args': {'user_id': 'abc123'}, 'id': 'b91a4585-329e-4f0b-90df-5e894f4aa301', 'type': 'tool_call'}], invalid_tool_calls=[], usage_metadata={'input_tokens': 219, 'output_tokens': 25, 'total_tokens': 244}), ToolMessage(content="{'name': 'Foo', 'age': 25, 'email': 'foo@langchain.dev'}", name='get_user_info', id='22e57991-eb13-4c31-aac2-4703a9cee85e', tool_call_id='b91a4585-329e-4f0b-90df-5e894f4aa301'), AIMessage(content="The user with ID 'abc123' has the following details:\n- Name: Foo\n- Age: 25\n- Email: foo@langchain.dev", additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-06T09:35:10.983309Z', 'done': True, 'done_reason': 'stop', 'total_duration': 814980500, 'load_duration': 29135800, 'prompt_eval_count': 283, 'prompt_eval_duration': 34088000, 'eval_count': 36, 'eval_duration': 741038000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a1b036-4957-717e-adc0-ef39913e7cd0-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 283, 'output_tokens': 36, 'total_tokens': 319})]}
+get-message= The user with ID 'abc123' has the following details:
+- Name: Foo
+- Age: 25
+- Email: foo@langchain.dev
+```
+
+代码说明：
+- save_user_info工具用于保存用户信息，用户信息通过store的put方法以(namespace,key,value)的形式保存起来。
+- get_user_info工具用户id获取用户信息，通过store的get方法获取，需要提供namespace和key。
+- create_agent()在创建Agent的时候，初始化了store，它是一种内存形式的存储，类型为InMemoryStore，这样会将信息保存在内存中。
+- 通过invoke()两次调用了模型，第一次invoke保存用户信息，第二次invoke()获取用户信息。从输出结果可以看到，保存的用户信息被查询到，
+这表明store是跨会话的，这和state不同。
+- 这里为了演示，store中的用户信息是保存在内存中的，生产环境store使用持久化存储，例如数据库等。后续再详细介绍。
+
+State和Store对比：
+| 对比项 | State | Store |
+| ---- | ---- | ---- |
+| 性质 | 临时、易变 | 持久、跨对话 |
+| 作用范围 | 仅存在于当前对话（Current Conversation）的进程中 | 跨对话（Across Conversations）。 |
+| 生命周期 | 当对话结束、会话重启或进程终止时，State 中的数据通常会重置或丢失。 | 数据被持久化保存（通常写入数据库），即使对话结束、系统重启，数据依然存在。 |
+| 典型用途 | 记录当前对话的消息历史（Conversation History）。追踪当前流程的执行进度（如：计数器、当前步骤）。存储为了完成当前任务而临时生成的中间数据。 | 保存用户的长期偏好设置（如：用户喜欢用摄氏度还是华氏度）。维护一个长期更新的知识库或用户画像。记住用户在上次对话中说过的关键信息。 |

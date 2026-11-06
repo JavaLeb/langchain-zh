@@ -29,7 +29,13 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: '核心组件',
       collapsible: true, // 设为 true 可折叠
-      items: ['core-components/agents/overview','core-components/models/models'],
+      items: ['core-components/overview',
+        // 'core-components/agents',
+        'core-components/models',
+        'core-components/messages',
+        'core-components/tools',
+        // 'core-components/structured-outputs',
+        ],
     },
 
   ],
