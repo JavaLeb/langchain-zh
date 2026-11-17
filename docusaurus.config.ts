@@ -87,9 +87,15 @@ const config: Config = {
       items: [
         {
           type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
+          sidebarId: 'langChainSidebar',
           position: 'left',
-          label: '入门教程',
+          label: 'LangChain',
+        },
+        {
+          type: 'docSidebar',
+          sidebarId: 'langGraphSidebar',
+          position: 'left',
+          label: 'LangGraph',
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {

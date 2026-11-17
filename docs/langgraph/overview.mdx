@@ -1,0 +1,433 @@
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+
+# 概览
+
+LangGraph是用于长时间运行、有状态Agent的底层编排框架和运行时。可以将工作流定义为共享状态、
+节点和边组成的图，并且可以在同一图中混合确定性步骤和LLM驱动的步骤。
+
+LangGraph专注于编排功能，如持久执行（durable execution）、流（streaming）和人在循环（human-in-the-loop）。
+它没有规定提示或代理体系结构。
+
+
+在开始之前，了解Agent使用的构建块，特别是模型和工具。文档示例通常使用LangChain进行这些集成，但LangGraph不需要LangChain。
+
+
+如果想要更高级的Agent循环，请使用Deep Agents或LangChain Agent。当需要对状态和控制流进行显式控制时，请使用LangGraph。
+
+
+
+## 能力
+
+LangGraph为有状态、长周期工作流提供运行时原语。它不会对提示词做封装抽象，也不会强制使用固定的智能体架构。
+
+- 确定性和代理步骤（Deterministic and agentic steps）
+  - 将手工编码的节点与模型驱动的节点组合在一个图中。
+- 持久性（Persistence）
+  - 在失败或暂停后检查点状态和恢复。
+- 人在回路（Human-in-the-loop）
+  - 暂停执行，查看或修改状态，之后继续运行。
+- 记忆（Memory）
+  - 会话内的短期线程状态，以及跨会话的长期记忆能力。
+- 
+  - 图运行过程中流式输出 Token、状态更新以及其他各类事件。
+
+
+
+
+
+## 快速开始
+
+这个快速入门演示如何使用LangGraph Graph API构建计算器Agent。
+为了演示方便，继续使用Ollama。除了需要langchain外，还需要langgraph。
+
+
+
+<Tabs>
+  <TabItem value="pip" label="pip" default>
+```bash
+pip install -U langgraph
+```
+  </TabItem>
+  <TabItem value="uv" label="uv">
+
+  </TabItem>
+</Tabs>
+
+
+## 构建Agent
+
+下面通过代码来构建图中的这样一个Graph。
+
+![LangGraph Quickstart](/langgraph-img/start/langgraph-quickstart.png)
+
+- 图中START和END节点只是一个标识节点，它们什么也不做，只是表示开始和结束。
+- llm_call是一个大模型调用节点，接着根据是否有工具调用来分支，
+  - 如果没有工具可调用，则END，整个Graph结束。
+  - 如果有工具调用，进入tool_node节点来调用工具，并将结果回传给llm_call，直到没有工具可调用，进入END。
+
+### 定义工具和模型
+
+使用qwen2.5:7b模型，定义加法，乘法和除法。
+
+```python
+from langchain.tools import tool
+from models import qwen2dot5_7b_model as model
+
+
+# Define tools
+@tool
+def multiply(a: int, b: int) -> int:
+    """Multiply `a` and `b`.
+
+    Args:
+        a: First int
+        b: Second int
+    """
+    return a * b
+
+
+@tool
+def add(a: int, b: int) -> int:
+    """Adds `a` and `b`.
+
+    Args:
+        a: First int
+        b: Second int
+    """
+    return a + b
+
+
+@tool
+def divide(a: int, b: int) -> float:
+    """Divide `a` and `b`.
+
+    Args:
+        a: First int
+        b: Second int
+    """
+    return a / b
+
+
+# Augment the LLM with tools
+tools = [add, multiply, divide]
+tools_by_name = {tool.name: tool for tool in tools}
+model_with_tools = model.bind_tools(tools)
+```
+
+代码说明：
+- 代码中定义了三个工具，整数的加法、乘法和除法，并给出了详细的文档注释docstring，这对于大模型来说是非常必要的，
+让大模型能够更好的理解并使用工具。
+- 代码中通过导入model来使用qwen2.5:7b，关于这个模型已经在前面章节中的代码初始化了，这里直接导入使用。
+- 最后，构建了工具列表tools，以及工具字典tools_by_name，`{'add':add,'multiply':multiply,'divide':divide}`，
+然后将工具绑定到模型上。
+
+
+
+### 定义状态
+下面我们来定义图的状态。这个例子中图的状态有消息和LLM调用的次数，代码如下：
+
+
+```python
+from langchain.messages import AnyMessage
+from typing_extensions import TypedDict, Annotated
+import operator
+
+
+class MessagesState(TypedDict):
+    messages: Annotated[list[AnyMessage], operator.add]
+    llm_calls: int
+```
+
+代码说明：
+- 定义了一个状态类MessageState，它是一个字典类型，`{'messages':list[AnyMessage], 'llm_calls':int}`，
+messages是AnyMessage类型的列表，llm_calls是一个整数类型。
+- operator.add表示向messages列表添加时，采用追加。
+
+
+
+### 定义模型节点
+
+
+```python
+from langchain.messages import SystemMessage
+
+
+def llm_call_node(state: dict):
+    """LLM decides whether to call a tool or not"""
+
+    return {
+        "messages": [
+            model_with_tools.invoke(
+                [
+                    SystemMessage(
+                        content="You are a helpful assistant tasked with performing arithmetic on a set of inputs."
+                    )
+                ]
+                + state["messages"]
+            )
+        ],
+        "llm_calls": state.get('llm_calls', 0) + 1
+    }
+```
+
+代码说明：
+- 这里定义一个大模型调用函数，后续将作为图的一个节点来使用。
+- llm_call_node通过model_with_tools.invoke()调用大模型，先将系统SystemMessage月状态中的消息拼接，
+然后传给大模型，大模型将返回结果保存到messages中，并将大模型调用次数llm_calls加1。
+
+
+
+### 定义工具节点
+
+```python
+def tool_node(state: dict):
+    """Performs the tool call"""
+
+    result = []
+    for tool_call in state["messages"][-1].tool_calls:
+        tool = tools_by_name[tool_call["name"]]
+        observation = tool.invoke(tool_call["args"])
+        result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+    return {"messages": result}
+```
+
+代码说明：
+- tool_node是一个函数，后续将作为图的一个工具节点。
+- 这个函数遍历大模型调用的工具，然后将每个工具的输出结果（例如加法函数的返回值）添加到result中。
+
+
+### 定义结束逻辑
+
+这里定义一个判断逻辑。如果大模型要调用工具，返回tool_node，否则结束。
+
+```python
+def should_continue(state: MessagesState) -> Literal["tool_node", END]:
+    """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
+
+    messages = state["messages"]
+    last_message = messages[-1]
+
+    # If the LLM makes a tool call, then perform an action
+    if last_message.tool_calls:
+        return "tool_node"
+
+    # Otherwise, we stop (reply to the user)
+    return END
+```
+
+
+
+### 构建编译Agent
+
+```python
+# Build workflow
+agent_builder = StateGraph(MessagesState)
+
+# Add nodes
+agent_builder.add_node("llm_call_node", llm_call_node)
+agent_builder.add_node("tool_node", tool_node)
+
+
+# START -> llm_call  -无工具可调用-> END
+#                    -有工具可调用-> tool_node -> llm_call
+# Add edges to connect nodes
+agent_builder.add_edge(START, "llm_call_node")
+agent_builder.add_conditional_edges(
+    "llm_call_node",
+    should_continue,
+    ["tool_node", END]
+)
+agent_builder.add_edge("tool_node", "llm_call_node")
+
+# Compile the agent
+agent = agent_builder.compile()
+```
+
+代码说明：
+- 每个图都有一个START，和一个END节点。
+- 通过StateGraph构建了一个空图agent_builder，它暂时没有节点，也没有边。
+- 通过add_node向图中增加了两个节点llm_call_node和tool_node。
+- 通过add_edge向图中添加了两条边。一条从START指向llm_call_node，一条从tool_node指向llm_call_node
+- 通过add_conditional_edges向图中添加一条“条件边”，从llm_call_node开始，指向需要通过should_continue来判断，
+如果返回tool_node，指向tool_node，如果返回END，执行END。
+
+### 完整代码
+完整代码如下：
+```python
+from langchain.tools import tool
+from models import qwen2dot5_7b_model as model
+
+
+# Define tools
+@tool
+def multiply(a: int, b: int) -> int:
+    """Multiply `a` and `b`.
+
+    Args:
+        a: First int
+        b: Second int
+    """
+    return a * b
+
+
+@tool
+def add(a: int, b: int) -> int:
+    """Adds `a` and `b`.
+
+    Args:
+        a: First int
+        b: Second int
+    """
+    return a + b
+
+
+@tool
+def divide(a: int, b: int) -> float:
+    """Divide `a` and `b`.
+
+    Args:
+        a: First int
+        b: Second int
+    """
+    return a / b
+
+
+# Augment the LLM with tools
+tools = [add, multiply, divide]
+tools_by_name = {tool.name: tool for tool in tools}
+model_with_tools = model.bind_tools(tools)
+
+
+from langchain.messages import AnyMessage
+from typing_extensions import TypedDict, Annotated
+import operator
+
+
+class MessagesState(TypedDict):
+    messages: Annotated[list[AnyMessage], operator.add]
+    llm_calls: int
+
+
+from langchain.messages import SystemMessage
+
+
+def llm_call_node(state: dict):
+    """LLM decides whether to call a tool or not"""
+
+    return {
+        "messages": [
+            model_with_tools.invoke(
+                [
+                    SystemMessage(
+                        content="You are a helpful assistant tasked with performing arithmetic on a set of inputs."
+                    )
+                ]
+                + state["messages"]
+            )
+        ],
+        "llm_calls": state.get('llm_calls', 0) + 1
+    }
+
+
+from langchain.messages import ToolMessage
+
+
+def tool_node(state: dict):
+    """Performs the tool call"""
+
+    result = []
+    for tool_call in state["messages"][-1].tool_calls:
+        tool = tools_by_name[tool_call["name"]]
+        observation = tool.invoke(tool_call["args"])
+        result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+    return {"messages": result}
+
+
+from typing import Literal
+from langgraph.graph import StateGraph, START, END
+
+
+def should_continue(state: MessagesState) -> Literal["tool_node", END]:
+    """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
+
+    messages = state["messages"]
+    last_message = messages[-1]
+
+    # If the LLM makes a tool call, then perform an action
+    if last_message.tool_calls:
+        return "tool_node"
+
+    # Otherwise, we stop (reply to the user)
+    return END
+
+
+# Build workflow
+agent_builder = StateGraph(MessagesState)
+
+# Add nodes
+agent_builder.add_node("llm_call_node", llm_call_node)
+agent_builder.add_node("tool_node", tool_node)
+
+
+# START -> llm_call  -无工具可调用-> END
+#                    -有工具可调用-> tool_node -> llm_call
+# Add edges to connect nodes
+agent_builder.add_edge(START, "llm_call_node")
+agent_builder.add_conditional_edges(
+    "llm_call_node",
+    should_continue,
+    ["tool_node", END]
+)
+agent_builder.add_edge("tool_node", "llm_call_node")
+
+# Compile the agent
+agent = agent_builder.compile()
+
+from langchain.messages import HumanMessage
+
+messages = [HumanMessage(content="Add 3 and 4.")]
+messages = agent.invoke({"messages": messages})
+for m in messages["messages"]:
+    m.pretty_print()
+```
+
+输出结果：
+```
+================================ Human Message =================================
+
+Add 3 and 4.
+================================== Ai Message ==================================
+Tool Calls:
+  add (c74efa5b-b503-4b3e-a412-19d4ad79a9d8)
+ Call ID: c74efa5b-b503-4b3e-a412-19d4ad79a9d8
+  Args:
+    b: 4
+    a: 3
+================================= Tool Message =================================
+
+7
+================================== Ai Message ==================================
+
+The sum of 3 and 4 is 7.
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -18,25 +18,38 @@ const sidebars: SidebarsConfig = {
 
   // But you can create a sidebar manually
   
-  tutorialSidebar: [
+  langChainSidebar: [
     {
       type: 'category',
       label: '开始',
       collapsible: true, // 设为 true 可折叠
-      items: ['start/install', 'start/quick_start'],
+      items: ['langchain/start/install', 
+        'langchain/start/quick_start'],
     },
     {
       type: 'category',
       label: '核心组件',
       collapsible: true, // 设为 true 可折叠
-      items: ['core-components/overview',
+      items: ['langchain/core-components/overview',
         // 'core-components/agents',
-        'core-components/models',
-        'core-components/messages',
-        'core-components/tools',
+        'langchain/core-components/models',
+        'langchain/core-components/messages',
+        'langchain/core-components/tools',
         // 'core-components/structured-outputs',
         ],
     },
+
+  ],
+
+    langGraphSidebar: [
+    {
+      type: 'category',
+      label: '开始',
+      collapsible: true, // 设为 true 可折叠
+      items: ['langgraph/overview', 
+      ]
+    },
+
 
   ],
    
