@@ -47,6 +47,9 @@ const sidebars: SidebarsConfig = {
       label: '开始',
       collapsible: true, // 设为 true 可折叠
       items: ['langgraph/overview', 
+        'langgraph/capabilities/persistence',
+        'langgraph/capabilities/checkpointers',
+        'langgraph/capabilities/stores',
       ]
     },
 

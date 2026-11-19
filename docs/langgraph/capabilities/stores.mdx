@@ -1,0 +1,364 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+
+
+
+# 存储（Stores）
+
+**存储（Stores）** 可供智能体在多个会话线程之间持久保存信息，包括用户偏好、累积知识，
+以及需要在单次对话结束后仍然保留的事实数据。它和检查点器（Checkpointer）
+不同：检查点器保存的是**限定在单个线程内**的完整图状态；而 Stores 存放的是任意键值对数据，**所有线程都可以访问**。
+
+
+![Stores](/langgraph-img/capabilities/stores.png)
+
+图中以用户级长期记忆跨会话复用为例说明Stores的原理。用户user 1和聊天App第一次会话，
+存储用户本身的长期信息：比如用户爱好、个人设定、记住的事实。过一段时间后，用户user 1与聊天App第二次会话，可以
+继续访问第一次会话中存储的信息数据。
+
+
+## 基本使用
+
+下面的代码片段显示了不使用LangGraph的InMemoryStore：
+
+```python
+from langgraph.store.memory import InMemoryStore
+from uuid_utils import uuid7
+
+store = InMemoryStore()
+
+user_id = "1"
+namespace_for_memory = (user_id, "memories")
+memory_id = str(uuid7())
+memory = {"food_preference" : "I like pizza"}
+store.put(namespace_for_memory, memory_id, memory)
+
+memories = store.search(namespace_for_memory)
+
+print('search_memories=',memories)
+print(memories[-1].dict())
+
+get_memories=store.get(namespace_for_memory, memory_id)
+print('get_memories=',get_memories)
+
+store.delete(namespace_for_memory,memory_id)
+
+get_memories=store.get(namespace_for_memory, memory_id)
+print('get_memories after delete=',get_memories)
+```
+
+输出结果：
+```
+search_memories= [Item(namespace=['1', 'memories'], key='01a1f282-d144-70e2-b0c3-682ed1b614af', value={'food_preference': 'I like pizza'}, created_at='2026-11-19T06:33:41.955318+00:00', updated_at='2026-11-19T06:33:41.956318+00:00', score=None)]
+{'namespace': ['1', 'memories'], 'key': '01a1f282-d144-70e2-b0c3-682ed1b614af', 'value': {'food_preference': 'I like pizza'}, 'created_at': '2026-11-19T06:33:41.955318+00:00', 'updated_at': '2026-11-19T06:33:41.956318+00:00', 'score': None}
+get_memories= Item(namespace=['1', 'memories'], key='01a1f282-d144-70e2-b0c3-682ed1b614af', value={'food_preference': 'I like pizza'}, created_at='2026-11-19T06:33:41.955318+00:00', updated_at='2026-11-19T06:33:41.956318+00:00')
+get_memories after delete= None
+```
+
+代码说明：
+- 代码中使用的是内存Store是InMemoryStore()，程序运行结束后，内存Store中存储的数据会丢失。
+- 内存的命名空间由一个tuple[str, ...]类型的元组命名，例如：（`<user_id>`, Memories）。命名空间可以是任意长度并表示任何内容，
+不必是特定于用户的。例如：（info, basic,age）
+- 代码中定义了需要保存的数据的key为memory_id，value为`{"food_preference" : "I like pizza"}`，通过put()方法存入store。
+- 通过search()方法来查询Store的数据，需要传入命名空间。返回结果是Item类型的列表。Item由如下字段构成：
+  - namespace：字符串元组tuple[str, ...]，该内存的命名空间。
+  - key：此命名空间中内存的唯一键。
+  - value：此命名空间中内存的值，本身是一个字典。
+  - created_at：创建该内存时的时间戳。
+  - updated_at：更新该内存的时间戳。
+  - score：与你要搜索的内容的相关性/相似性评分。
+- 可以通过delete方法删除store中的数据，get()方法来查询store中的数据。
+
+## 列出命名空间中的Items
+
+在不传入查询语句（`query`）与过滤条件（`filter`）的情况下调用同步接口 `store.search`（或异步接口 `store.asearch`），
+会返回存储在 `namespace_prefix`（命名空间前缀）下的数据条目，返回数量上限由 `limit` 参数控制。当你不需要语义排序，
+只是想要枚举某个命名空间下的全部内容时，可以使用该方式。
+
+search方法的源码如下：
+```python
+    def search(
+        self,
+        namespace_prefix: tuple[str, ...],
+        /,
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        limit: int = 10,
+        offset: int = 0,
+        refresh_ttl: bool | None = None,
+    ) -> list[SearchItem]:
+```
+需要牢记三点特性：
+- **`namespace_prefix` 是前缀匹配，而非精确匹配**。传入 `("alice",)` 时，
+同样会返回 `("alice", "memories")`、`("alice", "preferences")` 等子命名空间下的数据条目。
+如果只想限定在某一级命名空间，你需要传入完整命名空间，或者在客户端根据 `item.namespace` 对返回结果做过滤。
+- **超出 limit 上限的结果会被静默截断**，不会给出溢出提示。要么把 limit 设置得大于你预期的最大条数，
+要么搭配 offset 实现分页。
+- **默认排序规则由存储后端决定**。`PostgresStore` 和 `AsyncPostgresStore` 按 `updated_at` 倒序返回（
+最新修改的排在前面）；`InMemoryStore` 按插入顺序返回（最新插入的排在末尾）。不要依赖不同后端之间统一的排序行为；
+如果对顺序有要求，请在客户端根据 `item.updated_at` 自行排序。
+
+
+
+```python
+from langgraph.store.memory import InMemoryStore
+from uuid_utils import uuid7
+
+store = InMemoryStore()
+
+user = "alice"
+store.put((user, "memories",'GB'), str(uuid7()), {"my_mem": "1GB"})
+store.put((user, "preferences",'food'), str(uuid7()), {"food_preference": "I like pizza"})
+
+
+namespaces = store.list_namespaces(prefix=("alice",), max_depth=2)
+print('namespaces:', namespaces)
+
+# Return up to 100 items stored under ("alice", "memories").
+items = store.search(("alice", "memories"), limit=100)
+print('items:', items)
+
+page_size = 1
+offset = 0
+current_page=0
+while True:
+    page = store.search(("alice",), limit=page_size, offset=offset)
+    if not page:
+        break
+    for item in page:
+        print('current_page=',current_page,'item=',item)
+    offset += page_size
+    current_page += 1
+```
+
+输出结果：
+```
+namespaces: [('alice', 'memories'), ('alice', 'preferences')]
+items: [Item(namespace=['alice', 'memories', 'GB'], key='01a1f1d5-c06f-7775-b285-82ca9a4da02d', value={'my_mem': '1GB'}, created_at='2026-11-19T03:24:39.919523+00:00', updated_at='2026-11-19T03:24:39.919523+00:00', score=None)]
+current_page= 0 item= Item(namespace=['alice', 'memories', 'GB'], key='01a1f1d5-c06f-7775-b285-82ca9a4da02d', value={'my_mem': '1GB'}, created_at='2026-11-19T03:24:39.919523+00:00', updated_at='2026-11-19T03:24:39.919523+00:00', score=None)
+current_page= 1 item= Item(namespace=['alice', 'preferences', 'food'], key='01a1f1d5-c06f-7775-b285-82cb987b0415', value={'food_preference': 'I like pizza'}, created_at='2026-11-19T03:24:39.919523+00:00', updated_at='2026-11-19T03:24:39.919523+00:00', score=None)
+```
+
+代码说明：
+- 要发现存在哪些命名空间，可以使用store.list_namespaces或store.alist_namespaces。
+- 代码最后使用分页，展示命名空间下的数据。
+
+
+## 语义搜索
+
+除了简单的检索之外，Store还支持语义搜索，允许根据含义而不是精确匹配来查找Memory。
+要启用此功能，使用嵌入模型（embedding model）配置存储。
+
+在演示之前，需要安装numpy包，否则运行报错：
+```
+NumPy not found in the current Python environment. 
+The InMemoryStore will use a pure Python implementation for vector operations,
+ which may significantly impact performance, especially for large datasets or frequent searches. 
+ For optimal speed and efficiency, consider installing NumPy: pip install numpy
+```
+
+<Tabs>
+  <TabItem value="pip" label="pip" default>
+```bash
+pip install numpy
+```
+  </TabItem>
+  <TabItem value="uv" label="uv">
+
+  </TabItem>
+</Tabs>
+
+代码如下：
+```python
+from langchain.embeddings import init_embeddings
+from langgraph.store.memory import InMemoryStore
+from langchain_ollama import OllamaEmbeddings
+from uuid_utils import uuid7
+
+embedding = OllamaEmbeddings(
+    model="nomic-embed-text",
+    # base_url="http://localhost:11434"   # 远程Ollama地址按需修改
+)
+
+store = InMemoryStore(
+    index={
+        "embed": embedding,  # Embedding provider
+        # "embed": init_embeddings("ollama:nomic-embed-text"),
+        "dims": 768,  # Embedding dimensions
+        "fields": ["food_preference", "$"]  # Fields to embed
+    }
+)
+
+user_id = "1"
+namespace_for_memory = (user_id, "memories")
+
+memories_to_add = [
+    {"food_preference": "I like pizza"},
+    {"food_preference": "I hate broccoli"},
+    {"food_preference": "My favorite drink is lemon tea"}
+]
+for item in memories_to_add:
+    mid = str(uuid7())
+    store.put(namespace_for_memory, mid, item)
+    print(f"✅ 写入 memory_id={mid}, content={item}")
+
+store.put(
+    namespace_for_memory,
+    str(uuid7()),
+    {
+        "food_preference": "I love Italian cuisine",
+        "context": "Discussing dinner plans"
+    },
+    index=["food_preference"]  # Only embed "food_preferences" field
+)
+
+store.put(
+    namespace_for_memory,
+    str(uuid7()),
+    {"system_info": "Last updated: 2024-01-01"},
+    index=False
+)
+
+print("\n===== 测试1：不带 query，仅枚举命名空间下全部条目（无向量检索） =====")
+all_items = store.search(namespace_for_memory, limit=10)
+for it in all_items:
+    print(f"- key={it.key}, value={it.value}")
+
+print("\n===== 测试2：带 query，语义向量检索（Ollama nomic-embed-text） =====")
+semantic_result = store.search(
+    namespace_for_memory,
+    query="What does the user like to eat?",
+    limit=3  # Return top 3 matches
+)
+# 格式化打印，查看得分
+for rank, it in enumerate(semantic_result):
+    print(f"[{rank + 1}] score={it.score:.4f}, key={it.key}, value={it.value}")
+```
+
+输出结果：
+```
+✅ 写入 memory_id=01a1f226-fad7-7126-8600-1d902a446a7e, content={'food_preference': 'I like pizza'}
+✅ 写入 memory_id=01a1f226-fb0b-7524-b35f-626abe82b41f, content={'food_preference': 'I hate broccoli'}
+✅ 写入 memory_id=01a1f226-fb47-72b5-824d-8e54e290af8d, content={'food_preference': 'My favorite drink is lemon tea'}
+
+===== 测试1：不带 query，仅枚举命名空间下全部条目（无向量检索） =====
+- key=01a1f226-fad7-7126-8600-1d902a446a7e, value={'food_preference': 'I like pizza'}
+- key=01a1f226-fb0b-7524-b35f-626abe82b41f, value={'food_preference': 'I hate broccoli'}
+- key=01a1f226-fb47-72b5-824d-8e54e290af8d, value={'food_preference': 'My favorite drink is lemon tea'}
+- key=01a1f226-fb6f-72e1-809b-058c2385fcb7, value={'food_preference': 'I love Italian cuisine', 'context': 'Discussing dinner plans'}
+- key=01a1f226-fba3-77b5-9355-d086a4385fdc, value={'system_info': 'Last updated: 2024-01-01'}
+
+===== 测试2：带 query，语义向量检索（Ollama nomic-embed-text） =====
+[1] score=0.7025, key=01a1f226-fb47-72b5-824d-8e54e290af8d, value={'food_preference': 'My favorite drink is lemon tea'}
+[2] score=0.7002, key=01a1f226-fad7-7126-8600-1d902a446a7e, value={'food_preference': 'I like pizza'}
+[3] score=0.6565, key=01a1f226-fb0b-7524-b35f-626abe82b41f, value={'food_preference': 'I hate broccoli'}
+```
+
+代码说明：
+- 代码中使用了Ollama中的嵌入模型nomic-embed-text。
+- 初始化InMemoryStore时，使用index配置嵌入模型、指定模型的维度，以及需要嵌入的字段列表，这里嵌入模型有两种方式，
+一种方式使用init_embeddings("ollama:nomic-embed-text")，另一种方式是OllamaEmbeddings()。
+- 代码中定义了一个命名空间(1, "memories")，里面添加了5条数据，前三条数据通过循环添加，第四条数据有两个字段food_preference和context，
+并通过index来指定嵌入的字段food_preference，第5条数据的key为system_info，并指定index=False，不嵌入。
+- 代码中提供了两种搜索方式，第一种未指定query，返回所有的key-value，value中返回所有的字段，第二种指定了query，
+返回结果按照与搜索内容的相关性从高到低排序，value仅返回被嵌入的字段。
+
+
+
+## 在LangGraph中使用
+
+
+
+
+
+
+
+
+
+## PostgreSQL Stores
+
+如果需要使用PostgreSQL关系数据库作为Store，需要事先安装如下包：
+<Tabs>
+  <TabItem value="pip" label="pip" default>
+```bash
+pip install langgraph-checkpoint-postgres
+pip install -U "psycopg[binary,pool]"
+```
+  </TabItem>
+  <TabItem value="uv" label="uv">
+
+  </TabItem>
+</Tabs>
+
+
+```python
+from langgraph.store.postgres import PostgresStore
+
+DB_URI = 'postgresql://postgres:root@localhost:5432/postgres'
+
+with PostgresStore.from_conn_string(DB_URI) as store:
+    # ⚠️ 首次使用必须执行，创建 store 相关表
+    store.setup()
+    namespace = ("users", "user-001")
+    # 写入
+    store.put(namespace, "preferences", {"language": "zh-CN", "level": "入门"})
+    # 读取
+    items = store.get(namespace, "preferences")
+    print('items=', items)
+    # 搜索（精确匹配命名空间前缀）
+    items = store.search(("users",))
+    for i in items:
+        print('key=', i.key, 'value=', i.value)
+```
+
+输出结果：
+```
+items= Item(namespace=['users', 'user-001'], key='preferences', value={'level': '入门', 'language': 'zh-CN'}, created_at='2026-11-19T17:34:35.118931+08:00', updated_at='2026-11-19T17:34:35.118931+08:00')
+key= preferences value= {'level': '入门', 'language': 'zh-CN'}
+```
+
+代码说明：
+- DB_URI是PG数据库的链接地址，读者需要自行安装PG数据库
+- store.setup()会在数据中创建store_migrations和store表，其中store表存储具体数据，而store_migrations记录store表在创建时的版本的号，
+具体SQL语句如下：
+```SQL
+CREATE TABLE IF NOT EXISTS store_migrations (
+    v INTEGER PRIMARY KEY
+)         
+```
+
+```SQL
+CREATE TABLE IF NOT EXISTS store (
+    -- 'prefix' represents the doc's 'namespace'
+    prefix text NOT NULL,
+    key text NOT NULL,
+    value jsonb NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (prefix, key)
+);
+
+-- For faster lookups by prefix
+CREATE INDEX CONCURRENTLY IF NOT EXISTS store_prefix_idx ON store USING btree (prefix text_pattern_ops);
+
+-- Add expires_at column to store table
+ALTER TABLE store
+ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE,
+ADD COLUMN IF NOT EXISTS ttl_minutes INT;
+
+-- Add indexes for efficient TTL sweeping
+CREATE INDEX IF NOT EXISTS idx_store_expires_at ON store (expires_at)
+WHERE expires_at IS NOT NULL;
+```
+
+store表在创建时，有四个SQL语句，每执行一个，store_migrations表中插入一个版本号，从0开始。例如执行完第一个，插入版本0，
+全部执行完，插入4个版本号，分别为0,1,2，3。
+
+
+更多的Store集成，查看
+[Store integrations](https://docs.langchain.com/oss/python/integrations/long-term-memory)
+
+## 构建自定义Store
+
