@@ -1,1 +1,127 @@
 # 检查点器（Checkpointers）
+
+
+检查点器会在每一个**超步（super-step）**保存图状态的快照，并按会话线程（thread）进行组织。
+为图编译时绑定检查点器，即可启用人在回路（human-in-the-loop）工作流、时间回溯（time travel）调试、
+容错（fault-tolerant）执行以及对话记忆能力。
+
+
+![Checkpointers](/langgraph-img/capabilities/checkpointers.png)
+
+
+
+| 术语 | 英文说明 | 中文解释 |
+|---|---|---|
+| **Graph** | Control flow of nodes, edges | 图，由节点、边定义的流程控制逻辑，描述智能体流转规则 |
+| **Super-steps（超步）** | Each sequential node is a separate super-step, while parallel nodes share the same super-step | 最小执行单元：串行节点各自独立超步；并行节点共用同一个超步，**超步结束才生成检查点** |
+| **Checkpoints（检查点）** | State and relevant metadata packaged at every super-step | 检查点：每个超步执行完成后打包的状态快照，包含 graph 状态、下一步节点、元信息 |
+| **Thread（会话线程）** | Collection of checkpoints | 会话线程：同一个对话/任务下所有有序检查点的集合，绑定唯一 `thread_id`，支持回溯、续跑 |
+| **StateSnapshot** | Type for checkpoints | 状态快照类型：承载检查点数据的对象类型，代码里读取检查点就是该类型实例 |
+
+
+逐层解读
+
+1. **Graph（图）**
+
+> 
+> 英文：Control flow of nodes, edges
+> 译文：由节点（node）、边（edge）构成的控制流
+> Graph 就是你定义的智能体流程：定义节点、节点之间跳转关系。
+> 例子：初始状态 `{state: "I"}` → 进入 Node1 → 进入 Node2 → 最终状态 `{state: "I heart langgraph"}`。
+> Graph 只描述**流程规则**，本身不保存历史状态。
+
+2. **Super-steps（超步）**
+
+> 
+> 英文：Each sequential node is a separate super-step, while parallel nodes share the same super-step
+> 译文：串行执行的每个节点单独为一个超步；并行执行的多个节点共享同一个超步
+> `super-step` 是 LangGraph 的**最小执行单元**。
+
+- 串行：Node1 执行完成 = 第 1 个超步；Node2 执行完成 = 第 2 个超步
+- 并行：多个节点同时跑完，全部结束才算同一个超步
+
+> 
+> ✅ 关键点：**每一次超步执行结束，才会生成一次检查点**，不是节点内部每一步都存。
+
+3. **Checkpoints（检查点）**
+
+> 
+> 英文：State and relevant metadata packaged at every super-step
+> 译文：在每个超步结束时，把状态和相关元数据打包保存
+> 超步跑完之后，LangGraph 打包一份快照：
+> 里面包含：当前 graph state、下一步要跑哪个节点（next）、唯一 id、其他元数据。
+> 图里粉色包是 Node1 跑完后的检查点；蓝色包是 Node2 跑完后的检查点。
+
+4. **Thread（会话线程）**
+
+> 
+> 英文：Collection of checkpoints
+> 译文：一组检查点的集合
+> 一个 `thread_id` 对应一个 Thread（一次对话会话）。
+> Thread 本质就是一串有序的检查点，记录这个会话完整执行历史。
+> 所以你可以在同一个 thread 里：暂停、回退到任意历史 checkpoint（time travel）、中断恢复。
+> 这就是为什么 checkpointer 是 thread-scoped（线程作用域）。
+
+5. **StateSnapshot**
+
+> 
+> 英文：Type for checkpoints
+> 译文：检查点对应的类型
+> `StateSnapshot` 是 LangGraph 里承载检查点数据的 Python 类型，代码中拿到的检查点对象就是 `StateSnapshot` 实例。
+
+
+
+## Checkpointers使用场景
+
+检查点器是实现以下能力的必备组件：
+
+**人在回路（Human-in-the-loop）**
+检查点器配合中断机制，支持人工查看、中断以及审批图的执行步骤。这类工作流依赖检查点器：人可以随时查看图在任意时刻的状态，并且在人工修改状态后，图能够从中断位置继续执行。示例可查阅中断相关文档。
+
+**记忆能力（Memory）**
+检查点器可以在多轮交互之间维持记忆。在持续的人机交互场景（例如对话）中，后续消息可以发送到同一个会话线程，线程会保留之前交互的上下文记忆。如需了解如何借助检查点器添加、管理对话记忆，请参考添加记忆文档。
+
+**时间回溯（Time travel）**
+检查点器支持时间回溯功能，用户可以回放历史执行记录，用来复盘或调试图中的特定步骤。除此之外，还可以在任意检查点处分叉图状态，尝试探索其他分支执行路径。
+
+**故障容错（Fault-tolerance）**
+检查点机制提供容错与错误恢复能力：如果某个超步内一个或多个节点执行失败，可以从最近一次成功执行的步骤重新启动图。
+
+**待写入数据（Pending writes）**
+当图在某个超步执行过程中节点报错时，LangGraph 会保存该超步内其他已经成功跑完节点的待写入检查点。后续从这个超步恢复执行时，已经成功的节点不会重复运行。
+
+
+
+## 核心概念
+
+### 线程（Threads）
+线程是分配给每个检查点（checkpoint）的唯一ID或线程标识符，由检查点器（checkpointer）保存。
+它包含一系列运行的累积状态。当执行运行（run）时，助手（assistant）的底层图的状态（state）将被持久化到线程中。
+
+
+当调用带有checkpointer的graph时，必须指定thread_id作为config的configurable的一部分：
+
+```python
+config = {"configurable": {"thread_id": "1"}}
+```
+
+可以检索线程的当前和历史状态。要持久化状态，必须在执行运行之前创建线程。
+
+checkpointer使用thread_id作为存储和检索检查点的主键。
+没有它，checkpointer不能保存状态或中断后恢复执行，因为checkpointer使用thread_id来加载保存的状态。
+
+### 检查点（Checkpoints）
+线程在特定时间点的状态称为检查点。检查点是在每个超步（super-step）中保存的graph状态的快照，
+并由一个StateSnapshot对象表示（请参阅StateSnapshot字段以获得完整的字段参考）。
+
+#### Super-steps（超步）
+LangGraph 在每个**超步边界**生成一个检查点。超步是图的一次“调度节拍”，在这个节拍内所有被调度的节点都会执行（节点之间可以并行运行）。
+对于 `START -> A -> B -> END` 这类串行图，输入阶段、节点 A、节点 B 各自对应独立的超步，每完成一个就生成一份检查点。理解超步边界对**时间回溯**功能非常关键：你只能从检查点（也就是超步边界）恢复执行。
+
+除了超步级别的检查点之外，LangGraph 还会在节点（任务）粒度持久化写入数据。超步内的每个节点执行完成后，它的输出会作为任务条目写入检查点器的 `checkpoint_writes` 表，关联到当前正在生成的检查点。正是这种按任务保存的写入数据，支撑了**待写入恢复机制**：如果同一个超步里其他节点执行失败，已经成功节点的输出已经落盘，恢复时无需重新执行。等到整个超步全部完成后，完整的状态快照才会正式提交。
+
+LangGraph 会持久化超步内各个节点执行产生的写入数据。这些数据以任务形式保存，用于故障容错：同一个超步内如果其他节点失败，恢复时不需要重新计算已经成功节点的输出。注意：这类任务写入并不是完整的 `StateSnapshot` 检查点，时间回溯只能在超步边界的完整检查点上恢复。
+
+检查点会被持久保存，可以在后续任意时刻用来还原会话线程的状态。
+
+我们来看下面这个简单图被调用时，会保存哪些检查点：

@@ -50,6 +50,8 @@ const sidebars: SidebarsConfig = {
         'langgraph/capabilities/persistence',
         'langgraph/capabilities/checkpointers',
         'langgraph/capabilities/stores',
+        'langgraph/capabilities/streaming',
+        'langgraph/capabilities/event_streaming',
       ]
     },
 

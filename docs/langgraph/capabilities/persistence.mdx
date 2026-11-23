@@ -2,11 +2,49 @@
 
 
 # 持久性
+持久化能力让 LangGraph 应用能够在单次图运行周期之外保留有效信息。当智能体需要接续对话、中断后恢复执行、故障后复原，或是在多轮交互之间记住信息时，持久化就至关重要。
+
+LangGraph 提供两套互补的持久化体系：
+
+- **检查点器（checkpointers）**：将线程的图状态保存为检查点。适用于**短期、线程隔离的内存场景**，包括对话接续、人在回路工作流、时间回溯调试以及故障容错。
+- **存储器（stores）**：在图状态之外保存业务自定义数据。适用于**长期、跨线程的内存场景**，例如用户偏好、事实信息、共享知识库等。
+
+大多数应用会同时使用两者：**检查点器**维护当前会话线程的状态，**存储器**保存可以跨线程访问的持久化信息。
 
 
+## 基本使用
+使用checkpointer、store或两者同时编译graph：
 
-## 检查点（Checkpointers）
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.memory import InMemoryStore
+
+# 定义graph
+
+checkpointer = InMemorySaver()
+store = InMemoryStore()
+
+graph = builder.compile(checkpointer=checkpointer, store=store)
+
+result = graph.invoke(
+    {"messages": [{"role": "user", "content": "Hi, my name is Bob."}]},
+    {"configurable": {"thread_id": "thread-1"}},
+)
+```
+
+代码说明：
+- checkpointer通常以Saver结尾，store通常以Store结尾，例如InMemorySaver()和InMemoryStore()，两者
+都是内存型的，程序运行结束后数据会丢失，因此可以选择数据库，例如PostgresSaver和PostgresStore。
+- 代码中省略的graph的定义。
 
 
-## 存储（Stores）
+## checkpointer与store对比
 
+
+| 项目 | Checkpointer（检查点器） | Store（存储器） |
+|---|---|---|
+| 存储内容 | 图状态快照 | 应用自定义键值数据 |
+| 作用域 | 单个会话线程 | 跨多个会话线程 |
+| 内存类型 | 短期、线程内存 | Long-term, cross-thread memory<br/>长期、跨线程内存 |
+| 适用场景 | 对话接续、人在回路、时间回溯、故障容错 | 用户偏好、事实信息、共享知识库 |
+| 访问方式 | 在图配置中传入 `thread_id` | 在节点或应用代码中读写数据 |

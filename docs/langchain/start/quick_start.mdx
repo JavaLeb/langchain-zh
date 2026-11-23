@@ -12,74 +12,78 @@ import TabItem from '@theme/TabItem';
 ## 构建一个基本的Agent
 
 考虑到qwen2.5:3b-instruct是一个占用资源小，又可以调用工具的LLM，因此本例以Ollama的qwen2.5:3b-instruct模型为例。
-
+下面构建一个可以查询城市天气情况的Agent。
 
 具体代码如下：
 <Tabs>
   <TabItem value="ollama" label="ollama" default>
     ```python 
-    from langchain.agents import create_agent
+from langchain.agents import create_agent
 
 
-    def get_weather(city: str) -> str:
-        """Get weather for a given city."""
+def get_weather(city: str) -> str:
+    """Get weather for a given city."""
 
-        print("正在调用get_weather工具……")
+    print("正在调用get_weather工具……")
 
-        return f"It's always sunny in {city}!"
+    return f"It's always sunny in {city}!"
 
 
-    agent = create_agent(
-        model="ollama:qwen2.5:3b-instruct",
-        tools=[get_weather],
-        system_prompt="You are a helpful assistant",
+agent = create_agent(
+    model="ollama:qwen2.5:3b-instruct",
+    tools=[get_weather],
+    system_prompt="You are a helpful assistant",
+)
+
+cities = ['beijing', 'San Francisco']
+for city in cities:
+    result = agent.invoke(
+        input={"messages": [{"role": "user", "content": "What's the weather in " + city + "?"}]}
     )
+    print(result["messages"][-1].content_blocks)
 
-    for _ in range(2):
-        result = agent.invoke(
-            input={"messages": [{"role": "user", "content": "What's the weather in San Francisco?"}]}
-        )
-        print(result["messages"][-1].content_blocks)
 
     ```
   </TabItem>
 </Tabs>
 
-代码说明：
-- 代码中使用langchain.agents的create_agent创建了一个agent，该agent通过model指定模型，tools指定要调用的工具，以及system_prompt指定系统角色。
-- 代码中get_weather是一个函数，入参是一个字符串类型的city，它表示城市名称，返回值也是字符串类型，表示这个城市的天气情况，函数打印一行正在调用工具的信息，并总是返回任何城市的天气都是sunny。
-- agent通过invoke方法来触发行为，传入messages，该消息以用户角色，来对模型提问。
-
-在运行代码前，需要事先启动Ollama，并运行当前大模型。
 
 输出结果
 ```text
 正在调用get_weather工具……
-[{'type': 'text', 'text': "It's always sunny in San Francisco!"}]
+[{'type': 'text', 'text': "It's always sunny in Beijing. Is there anything else you'd like to know about the weather there?"}]
 正在调用get_weather工具……
-[{'type': 'text', 'text': "It's always sunny in San Francisco! Is there anything else you'd like to know about the weather there?"}]
+[{'type': 'text', 'text': "It's always sunny in San Francisco!"}]
 ```
 
-如图：
-![Basic-Agent Result](/img/start/basic-agent-result.png)
 
-输出说明：
-- 代码中两次调用了模型，对于同样的输入，输出结果并不一定是完全相同的。
+
+代码说明：
+- 代码中get_weather是一个模拟查询城市天气的函数，入参是一个字符串类型的城市名称city，
+返回值也是字符串类型，表示这个城市的天气情况，总是返回城市的天气都是sunny，函数会打印一行正在调用工具的信息。
+- 代码中使用langchain.agents的create_agent创建了一个agent，该agent通过model指定模型，格式：
+`提供商:模型名称`，tools指定要调用的工具，是一个列表，多个工具使用逗号“,”分隔。
+以及system_prompt指定系统提示词，提示词内容指定了AI的助手角色。
+- agent通过invoke方法来触发行为，输入messages，该消息中有一条message，以用户为角色，来对模型提问。
 - agent调用了get_weather工具，这首先是因为qwen2.5:3b-instruct大模型有调用工具的能力。
+- 代码中两次调用了模型，对于同样的输入，输出结果并不一定是完全相同的。
+
+注：在运行代码前，需要事先启动Ollama，并运行当前大模型。
+
 
 
 ## 构建一个真实世界的Agent
-在下面的示例中，将构建一个可以回答有关文本文件的问题的研究代理。在此过程中，将探索以下概念：
-- 详细的系统提示更好的代理行为
-- 创建与外部数据集成的工具
-- 为一致响应建模配置
-- 会话记忆用于类似聊天的互动
-- 内置功能的深度代理（Deep Agents）
-- 测试代理
+在下面的示例中，将构建一个可以回答有关文本文件问题的研究Agent。在此过程中，将探索以下概念：
+- 详细的系统提示：为了更好的Agent行为，构建详细的系统提示。
+- 创建工具：创建一个可以集成外部数据的工具。
+- 模型配置：为得到一致的响应进行模型配置。
+- 对话记忆：用于类似聊天的互动。
+- Deep Agents：Deep Agents是一个内置特征。
+- 测试：测试构建好的代理。
 
 ### 安装依赖包
-后面创建Agent时，会用deep代理，deep代理具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
-可通过如下命令进行安装。
+后面创建Agent时，会用Deep Agent，它具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
+可通过如下命令进行安装deepagents包。
 <Tabs>
   <TabItem value="pip" label="pip" default>
     ```bash
@@ -104,11 +108,13 @@ SYSTEM_PROMPT = """You are a literary data assistant.
 Do not guess line counts or positions—ground them in tool results from the saved file."""
 ```
 
-这是一段Python代码，首先指定了系统角色是一个文字数据助理，并给定了fetch_text_from_url的能力，它从一个URL中获取文本加载到会话中。
+这是一段Python代码，通过一段长文本，详细给出了系统提示，
+首先指定了系统角色是一个文字数据助理，并给定了fetch_text_from_url工具的能力：从一个URL中获取文本并加载到对话中。
+并明确给出了模型不能做的事情：在工具结果中，不要从保存文件中猜测行数已经位置背景。
 
 ### 创建工具
 
-创建一个从url获取文本的工具。代码如下：
+创建一个从外部url链接获取文本内容的工具。代码如下：
 
 ```python
 from langchain.tools import tool
@@ -136,7 +142,7 @@ def fetch_text_from_url(url: str) -> str:
     return text
 ```
 
-例如URL：
+例如如下URL：
 ```url
 https://www.gutenberg.org/files/64317/64317-0.txt
 ```
@@ -147,6 +153,8 @@ https://www.gutenberg.org/files/64317/64317-0.txt
 
 
 ### 配置模型
+
+代码如下：
 
 ```python
 from langchain.chat_models import init_chat_model
@@ -163,7 +171,7 @@ model = init_chat_model(
 
 - model="qwen2.5:3b-instruct"
   - 含义：指定你要使用的具体大模型名称。
-  - 说明：这里使用的是通义千问团队发布的 Qwen2.5 指令微调版本，模型参数量为 3B（30亿参数）。该模型通常用于轻量级的本地部署，适合个人电脑运行。
+  - 说明：这里使用的是通义千问团队发布的 Qwen2.5，模型参数量为 7B（70亿参数）。该模型通常用于轻量级的本地部署，适合个人电脑运行。
 - model_provider="ollama"
   - 含义：指定模型的底层服务提供商（Provider）。
   - 说明：ollama 是一个非常流行的本地大模型运行与部署工具。这里告知 LangChain 通过本地启动的 Ollama 后台服务来发送请求，而不是通过 OpenAI 或阿里云的云端 API。
@@ -196,8 +204,9 @@ checkpointer = InMemorySaver()
 在生产环境中，使用持久性checkpointer将消息历史记录保存到数据库中。
 
 ### 创建Agent
-创建代理有两种不同的框架：LangChain代理和deep代理。LangChain和deep代理都提供了对工具、内存等的细粒度控制。两者之间的主要区别在于，
-deep代理具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
+创建代理有两种不同的框架：LangChain agent和深度代理（deep agent）。
+LangChain和deep agent都提供了对工具、内存等的细粒度控制。两者之间的主要区别在于：
+deep agent具有一系列已经内置的常用功能，例如规划、文件系统工具和子Agent。
 
 两种方式创建Agent代码如下：
 ```python
@@ -219,7 +228,8 @@ deep_agent = create_deep_agent(
 )
 ```
 
-单从代码形式上看，两者并无区别。
+单从代码形式上看，两者并无区别。create_agent是langchain.agents提供的方法，create_deep_agent是deepagents
+提供的方法。
 
 ### Agent执行
 
@@ -255,8 +265,12 @@ print("\ncreate_deep_agent:")
 print(deep_agent_result["messages"][-1].content_blocks)
 ```
 代码说明：
-- content中给出了URL地址，Agent回答三个问题，以及回答规范。
-- 这里的 thread_id 是 LangGraph 会话线程 ID，用来标识“这一轮对话属于哪个独立会话”。它的作用是：
+- content是消息内容，内容中给出了URL地址，Agent需要回答的三个问题，以及回答规范：
+  - 全文中有多少行包含子串 Gatsby（按行计数，不是出现次数）
+  - 第一次出现 Daisy 的行号（从 1 开始计数）
+  - 用两句话写一个中立的剧情简介
+  - 如果无法验证答案，就返回 null，并说明原因
+- 这里的 thread_id 是这次对话线程 ID，用来标识“这一轮对话属于哪个独立会话”。它的作用是：
   - 同一个 thread_id：多次调用 agent.invoke 时，Agent 会加载这个线程的历史状态，从而实现多轮对话记忆。
   - 不同 thread_id：会话完全隔离，不会互相影响。
   - 前提条件：只有在创建 Agent 或编译图时传入了 checkpointer，thread_id 才会真正生效。

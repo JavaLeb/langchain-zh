@@ -5,15 +5,15 @@ sidebar_position: 1
 # 模型
 LLM（大语言模型，Large Language Model）是强大的人工智能工具，可以像人类一样解释和生成文本。他们足够多才多艺，可以写内容、翻译语言、总结和回答问题，而不需要针对每个任务进行专门的培训。
 
-除了文本生成，许多模型还支持：
-- 工具调用（Tool calling）：调用外部工具（如数据库查询或API调用）并在其响应中使用结果。
+许多模型除了文本生成之外，还支持：
+- 工具调用（Tool calling）：调用外部工具（如数据库查询或API调用）并使用响应中的结果。
 - 结构化输出（Structured output）：其中模型的响应被限制为遵循已定义的格式。
-- 多模态性（Multimodality）：处理和返回文本以外的数据，如图像、音频和视频。
+- 多模态性（Multimodality）：处理和返回的数据，不再仅仅是文本，而是诸如图像、音频和视频。
 - 推理（Reasoning）：模型执行多步推理来得出结论。
 
 Model是Agent的推理引擎。它们驱动Agent的决策过程，决定调用哪个工具，如何解释结果，以及何时提供最终答案。
 
-选择的Model的质量和功能直接影响Agent的基线可靠性和性能。不同的Model擅长于不同的任务——有些更擅长于遵循复杂的指令，有些擅长结构化推理，有些支持更大的上下文窗口来处理更多的信息。
+选择的Model的质量和能力直接影响Agent的基线可靠性和性能。不同的Model擅长于不同的任务——有些更擅长于遵循复杂的指令，有些擅长结构化推理，有些支持更大的上下文窗口来处理更多的信息。
 
 LangChain的标准模型接口可以访问许多不同的提供商集成，这使得在模型之间进行试验和切换以找到最适合用例的模型变得容易。
 
@@ -129,14 +129,20 @@ print("response of message list using Message Object:\n",response)  # AIMessage(
 ```
 
 代码说明：
-- 第一个conversation是一个Json列表，每个Json指定了角色role和内容content，role有system、user和assistant。
-  - system（系统）：给模型设定“人设”或“全局规则”。它通常放在对话的最开头，用来告诉模型它的身份是什么、应该遵循什么指令。比如你例子中的 "You are a helpful assistant that translates English to French."，就是告诉 AI：“你是一个负责把英文翻译成法文的助手”，这样 AI 之后的所有回复都会围绕这个设定展开。
-  - user（用户）：代表你（也就是发起对话的人）。用户向模型发送消息，比如 "Translate: I love programming." 就是你向模型发出的具体指令。
-  - assistant（助手）：代表模型之前已经回复过的内容。它的作用是提供“上下文”，让模型知道之前的对话进展到了哪一步，从而能更连贯地回答后续问题。比如你例子中 AI 回复了 "J'adore la programmation."，这条记录就会被标记为 assistant。
+- 代码演示了三种方式传入对话：字符串、Json列表、LangChain内置对象列表。
+- 第一个conversation是一个Json列表，每个Json指定了角色role和内容content，role有system、user和assistant。含义分别如下：
+  - system（系统）：给模型设定“人设”或“全局规则”。它通常放在对话的最开头，用来告诉模型它的身份是什么、应该遵循什么指令。
+  比如你例子中的 "You are a helpful assistant that translates English to French."，
+  就是告诉 AI：“你是一个负责把英文翻译成法文的助手”，这样 AI 之后的所有回复都会围绕这个设定展开。
+  - user（用户）：代表你（也就是发起对话的人）。用户向模型发送消息，比如 "Translate: I love programming." 
+  就是你向模型发出的具体指令。
+  - assistant（助手）：代表AI，表示模型之前已经回复过的内容。它的作用是提供“上下文”，让模型知道之前的对话进展到了哪一步，
+  从而能更连贯地回答后续问题。比如你例子中 AI 回复了 "J'adore la programmation."，这条记录就会被标记为 assistant。
   简单来说，system 定规矩，user 提问题，assistant 记回答。
-- 第二个conversation使用了LangChain内置的消息对象：SystemMessage、HumanMessage和AIMessage，分别对应第一个conversation的system、user和assistant三个角色，两个conversation是等价的。后面章节将详细介绍Message。
+- 第二个conversation使用了LangChain内置的消息对象：SystemMessage、HumanMessage和AIMessage，
+分别对应第一个conversation的system、user和assistant三个角色，两个conversation是等价的。后面章节将详细介绍Message。
 - 三种方式均可通过invoke()方法的input参数传入来调用模型。
-- invoke()返回的是一个AIMessage对象。
+- invoke()返回的是一个AIMessage对象，表示模型的回复。
 
 输出结果：
 ```
@@ -151,7 +157,8 @@ response of message list using Message Object:
 ### Stream
 大多数模型可以在生成输出内容时流式传输输出内容。通过逐步显示输出，流式显著改善了用户体验，特别是对于较长的响应。
 
-调用stream()将返回一个迭代器Iterator[AIMessageChunk]，该迭代器在产生输出块时可以立即输出块。可以使用一个循环来实时处理每个块。
+调用stream()将返回一个迭代器Iterator[AIMessageChunk]，该迭代器会在输出块（output chunk）生成时逐块产出（yield）它们。
+可以使用一个循环来实时处理每个块。
 
 代码如下：
 ```python
@@ -202,20 +209,21 @@ The color of the sky can vary depending on the time of day, weather conditions, 
 ```
 
 代码说明：
-- chunk的类型是AIMessageChunk，通过text来输出文本内容，从结果来看chunk的内容可以是一个或者多个token，这里是一个token，或者token前有个空格。一个完整的单词Parrots，
+- chunk的类型是AIMessageChunk，通过text来输出文本内容，chunk的内容可以是一个或多个token，
+从结果来看这里是一个token，例如：`Par`，或者token前有个空格，例如：` have`。一个完整的单词
 可以分多个token输出，例如Parrots，分为Par和rots。
-- 输出结果太长，有部分内容使用省略号代替。
+- 程序的输出结果太长，有部分内容笔者使用省略号代替。
 
 
 
 ### Batch
-将一组独立的请求作为一个批（Batch）发送到一个模型中可以显著提高性能并降低成本，因为处理可以并行完成。
-可以通过调用batch()来实现。
+将一组独立的请求作为一个批（Batch）一次性发送给模型，可以显著提高性能并降低成本，因为处理可以并行完成。
+LangChain中通过batch()来实现。
 
-默认情况下，batch()将只返回整个批处理的最终输出。
-如果想在每个单独的输入完成生成时接收输出，可以使用batch_as_completed()对结果进行流处理。
-
-当使用batch_as_completed()时，结果可能会乱序到达。每个都包含用于匹配的输入索引，以便根据需要重建原始顺序。
+默认情况下，batch()将返回整个批处理的最终输出。
+如果想在每个单独的输入完成生成时接收输出，可以使用batch_as_completed()对结果进行流式处理。
+当使用batch_as_completed()时，结果可能会乱序到达，也就是说，第一个完成的并不一定对应的是第一个输入。
+每个输出都包含用于匹配的输入索引，以便根据需要重建原始顺序。
 
 代码如下：
 ```python
@@ -252,16 +260,293 @@ content="Quantum computing is a type of computing that uses the principles of qu
 ```
 
 代码说明：
-- batch_as_completed()的返回结果中带有索引号，例如0,1,2,。它们分别表示输入的索引号。
+- 代码中将三个问题作为一个批，传给模型。
+- batch_as_completed()的返回结果中带有索引号，例如0,1,2。它们分别表示输入的索引号。
 - 当使用batch()或batch_as_completed()处理大量输入时，可以通过在Runnablecconfig中设置max_concurrency属性来控制并行调用的最大数量。
 
 
 ## 工具调用
-模型可以请求调用执行任务的工具，例如从数据库中获取数据、搜索web或运行代码。工具由如下两部分组成：
-- 模式：包括工具的名称、描述，或参数定义（通常是JSON模式）。
+模型可以请求调用工具，例如从数据库中获取数据、搜索web或运行代码。工具由如下两个部分组成：
+- 模式（Schema）：包括工具的名称、描述，或参数定义（通常是JSON模式）。
 - 要执行的函数或协同程序。
 
-注：用户可能听说过“函数调用”（Functiong Calling）这个术语。我们将此与“工具调用”（Tool Calling）互换使用。
+注：用户可能听说过“函数调用”（Functiong Calling）这个术语。在LangChain中，与“工具调用”（Tool Calling）可以互换使用。
 
 下面是用户和模型之间的基本工具调用流程：
 ![Tool Calling Flow](/img/models/tool-calling-flow.png)
+
+图中工具调用大概流程如下：
+- 用户user将问题发送给模型，What's the weather in SF and NYC?
+- 模型model接受到用户问题后，分析问题，并决定调用哪个工具。
+- 模型将分析出来的参数传给要调用的工具，例如：将城市名称San Francisco、New York传给工具get_weather。
+- 工具接受到参数后执行，并将执行结果（results）返回给模型，例如这里的SF weather data，和 NYC weather data。
+- 模型接受到工具的执行结果（results）,对其进行处理，最终生成response发送给用户。
+
+
+要使定义的工具可供模型使用，必须使用bind_tools将这些工具绑定到模型上。
+在随后的调用中，模型可以根据需要选择调用任何绑定工具。
+
+一些模型提供商提供内置工具，可以通过模型或调用参数启用（例如ChatOpenAI， ChatAnthropic）。
+
+代码如下：
+
+```python
+from langchain.tools import tool
+from models import qwen2dot5_7b_model as model
+
+
+@tool
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    return f"It's sunny in {location}."
+
+
+model_with_tools = model.bind_tools([get_weather])
+
+response = model_with_tools.invoke("What's the weather like in Boston?")
+
+for tool_call in response.tool_calls:
+    # View tool calls made by the model
+    print(f"Tool: {tool_call['name']}")
+    print(f"Args: {tool_call['args']}")
+
+print(f'response={response}')
+```
+
+```python
+from langchain.chat_models import init_chat_model
+
+qwen2dot5_7b_model = init_chat_model(model="ollama:qwen2.5:7b")
+
+qwen2dot5_7b_instruct_model = init_chat_model(model="ollama:qwen2.5:7b-instruct")
+```
+
+输出结果：
+```
+Tool: get_weather
+Args: {'location': 'Boston'}
+response=content='' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-23T12:59:41.8132815Z', 'done': True, 'done_reason': 'stop', 'total_duration': 3601919900, 'load_duration': 3112661000, 'prompt_eval_count': 153, 'prompt_eval_duration': 96931000, 'eval_count': 20, 'eval_duration': 388533000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a2087d-9761-70c6-b04c-8efb1031f970-0' tool_calls=[{'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': 'b724eb15-84fd-4701-8798-09c4a9377d93', 'type': 'tool_call'}] invalid_tool_calls=[] usage_metadata={'input_tokens': 153, 'output_tokens': 20, 'total_tokens': 173}
+
+```
+
+代码说明：
+- 这里将model抽象到了一个单独的models.py文件中了， 后续使用模型，只需要通过from models来导入。
+- 代码将get_weather工具通过bind_tools绑定到了model上。
+- 从输出结果来看，模型并未调用工具get_weather（response中返回的content为空）。只是知道要调用的工具，
+以及传给工具的参数。
+
+### 工具执行循环（Tool execution loop）
+
+当模型绑定用户自定义的工具时，模型的响应中包含执行工具的请求。
+需要由用户来执行所请求的工具并将结果返回给模型，以便在后续推理中使用。
+
+代码如下：
+
+```python
+from langchain.tools import tool
+from models import qwen2dot5_7b_model as model
+
+
+@tool
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    return f"It's sunny in {location}."
+
+
+# Bind (potentially multiple) tools to the model
+tools = [get_weather]
+tools_by_name = {tool.name: tool for tool in tools}
+model_with_tools = model.bind_tools(tools)
+
+# Step 1: Model generates tool calls
+messages = [{"role": "user", "content": "What's the weather in Boston?"}]
+ai_msg = model_with_tools.invoke(messages)
+messages.append(ai_msg)
+
+# Step 2: Execute tools and collect results
+for tool_call in ai_msg.tool_calls:
+    print(f"type of tool_call={type(tool_call)}, tool_call={tool_call}")
+    # Execute the tool with the generated arguments
+    tool = tools_by_name[tool_call["name"]]
+    print(f'type of tool={type(tool)}')
+    tool_result = tool.invoke(tool_call)
+    print(f'type of tool_result={type(tool_result)}')
+    messages.append(tool_result)
+
+# Step 3: Pass results back to model for final response
+for message in messages:
+    print(f'type of message={type(message)},message={message}')
+final_response = model_with_tools.invoke(messages)
+print(f'final text={final_response.text}')
+```
+
+输出结果：
+```
+type of tool_call=<class 'dict'>, tool_call={'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': 'ea1252ea-d96a-4895-846f-8e935c911ce1', 'type': 'tool_call'}
+type of tool=<class 'langchain_core.tools.structured.StructuredTool'>
+type of tool_result=<class 'langchain_core.messages.tool.ToolMessage'>
+type of message=<class 'dict'>,message={'role': 'user', 'content': "What's the weather in Boston?"}
+type of message=<class 'langchain_core.messages.ai.AIMessage'>,message=content='' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-23T13:47:14.6438046Z', 'done': True, 'done_reason': 'stop', 'total_duration': 793535900, 'load_duration': 30870500, 'prompt_eval_count': 152, 'prompt_eval_duration': 330130000, 'eval_count': 20, 'eval_duration': 424610000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a208a9-2a38-7110-a05a-6bb845deb151-0' tool_calls=[{'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': 'ea1252ea-d96a-4895-846f-8e935c911ce1', 'type': 'tool_call'}] invalid_tool_calls=[] usage_metadata={'input_tokens': 152, 'output_tokens': 20, 'total_tokens': 172}
+type of message=<class 'langchain_core.messages.tool.ToolMessage'>,message=content="It's sunny in Boston." name='get_weather' tool_call_id='ea1252ea-d96a-4895-846f-8e935c911ce1'
+final text=The weather in Boston is sunny.
+```
+
+代码说明：
+- 执行model_with_tools.invoke，返回的是AIMessage，模型并未调用工具，而是返回了要调用的工具，以及要传给工具的参数。
+- 通过循环调用tool.invoke，来完成工具的调用，并将工具的返回结果ToolMessage添加到消息中。
+- 将所有消息再次传给模型，模型返回最终的结果。
+
+
+### 强制工具调用
+
+
+默认情况下，模型可以根据用户的输入自由选择要使用的绑定工具。
+然而，用户可能希望强制选择一个工具，确保模型使用特定的工具或给定列表中的任何工具。
+
+代码如下：
+
+```python
+model_with_tools = model.bind_tools([tool_1], tool_choice="any")
+```
+或者指定强制使用的工具：
+```python
+model_with_tools = model.bind_tools([tool_1], tool_choice="tool_1")
+```
+
+### 并行工具调用
+
+许多模型支持在适当的时候并行调用多个工具。这可以让模型同时从不同的来源收集信息。
+
+```python
+from langchain.tools import tool
+from models import qwen2dot5_7b_model as model
+
+
+@tool
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    return f"It's sunny in {location}."
+
+
+tools = [get_weather]
+tools_by_name = {tool.name: tool for tool in tools}
+model_with_tools = model.bind_tools(tools)
+
+response = model_with_tools.invoke(
+    "What's the weather in Boston and Tokyo?"
+)
+
+# The model may generate multiple tool calls
+print(response.tool_calls)
+# [
+#   {'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': 'call_1'},
+#   {'name': 'get_weather', 'args': {'location': 'Tokyo'}, 'id': 'call_2'},
+# ]
+
+
+# Execute all tools (can be done in parallel with async)
+results = []
+for tool_call in response.tool_calls:
+    tool = tools_by_name[tool_call["name"]]
+    result = tool.invoke(tool_call)
+    print(f'{result}')
+    results.append(result)
+
+# 并行调用.
+results = get_weather.batch([call["args"] for call in response.tool_calls])
+print(results)
+```
+
+输出结果：
+```
+[{'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': 'a33b10a0-8b0e-4b8b-ac95-a85607ad6261', 'type': 'tool_call'}, {'name': 'get_weather', 'args': {'location': 'Tokyo'}, 'id': 'ca01f784-0be2-49b4-bb32-5e48afaea32a', 'type': 'tool_call'}]
+content="It's sunny in Boston." name='get_weather' tool_call_id='a33b10a0-8b0e-4b8b-ac95-a85607ad6261'
+content="It's sunny in Tokyo." name='get_weather' tool_call_id='ca01f784-0be2-49b4-bb32-5e48afaea32a'
+["It's sunny in Boston.", "It's sunny in Tokyo."]
+```
+
+
+如果出于业务逻辑考虑（例如工具之间有严格的先后依赖，或者为了控制 API 并发速率），
+不希望模型一次性返回多个工具调用，可以在绑定工具时通过参数强制禁用：
+```python
+# 强制模型每次只返回一个工具调用
+model_with_tools = model.bind_tools(tools, parallel_tool_calls=False)
+```
+
+### 流式工具调用
+当流式响应时，工具调用通过ToolCallChunk逐步构建。这允许在生成工具调用时看到它们，而不是等待完整的响应。
+
+代码如下：
+```python
+from langchain.tools import tool
+from models import qwen2dot5_7b_model as model
+
+
+@tool
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    return f"It's sunny in {location}."
+
+
+model_with_tools = model.bind_tools([get_weather])
+
+for chunk in model_with_tools.stream("What's the weather in Boston and Tokyo?"):
+    # Tool call chunks arrive progressively
+    for tool_chunk in chunk.tool_call_chunks:
+        print(tool_chunk)
+        if name := tool_chunk.get("name"):
+            print(f"Tool: {name}")
+        if id_ := tool_chunk.get("id"):
+            print(f"ID: {id_}")
+        if args := tool_chunk.get("args"):
+            print(f"Args: {args}")
+
+gathered = None
+for chunk in model_with_tools.stream("What's the weather in Boston?"):
+    gathered = chunk if gathered is None else gathered + chunk
+    print(gathered.tool_calls)
+```
+
+输出结果：
+```
+{'name': 'get_weather', 'args': '{"location": "Boston"}', 'id': 'd2f7a367-1947-4f0b-b92c-859d77c2e184', 'index': None, 'type': 'tool_call_chunk'}
+Tool: get_weather
+ID: d2f7a367-1947-4f0b-b92c-859d77c2e184
+Args: {"location": "Boston"}
+{'name': 'get_weather', 'args': '{"location": "Tokyo"}', 'id': 'a92b0e96-0bad-4a17-bf37-3b9304ce35e0', 'index': None, 'type': 'tool_call_chunk'}
+Tool: get_weather
+ID: a92b0e96-0bad-4a17-bf37-3b9304ce35e0
+Args: {"location": "Tokyo"}
+[{'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': '8980b7c3-2e7e-4369-b1a6-fac556ab22b6', 'type': 'tool_call'}]
+[{'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': '8980b7c3-2e7e-4369-b1a6-fac556ab22b6', 'type': 'tool_call'}]
+[{'name': 'get_weather', 'args': {'location': 'Boston'}, 'id': '8980b7c3-2e7e-4369-b1a6-fac556ab22b6', 'type': 'tool_call'}]
+```
+
+代码说明：
+- 从结果来看，并未流式输出，是因为LangChain不支持Ollama中Qwen2.5:7b模型的流式输出。
+
+
+正常的流式输出结果如下：
+```
+Tool: get_weather
+ID: call_SvMlU1TVIZugrFLckFE2ceRE
+Args: {"lo
+Args: catio
+Args: n": "B
+Args: osto
+Args: n"}
+Tool: get_weather
+ID: call_QMZdy6qInx13oWKE7KhuhOLR
+Args: {"lo
+Args: catio
+Args: n": "T
+Args: okyo
+Args: "}
+```
+
+## 结构化输出
+
+
+## 高阶主题
+
+
