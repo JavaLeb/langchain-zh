@@ -545,8 +545,243 @@ Args: "}
 ```
 
 ## 结构化输出
+可以要求模型按照与给定 schema（模式）相匹配的格式给出响应。这样做能有效保证输出易于解析，并可直接用于后续处理。
+LangChain 支持多种 schema 类型，也支持多种强制输出为结构化输出的方法。
 
+如下代码使用三种方式定义输出结构，分别是JSON Schema、TypedDict、Pydantic 模型。
+
+```python
+from models import qwen2dot5_7b_model as model
+
+json_schema = {
+    "title": "Movie",
+    "description": "A movie with details",
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "The title of the movie"},
+        "year": {"type": "integer", "description": "The year the movie was released"},
+        "director": {"type": "string", "description": "The director of the movie"},
+        "rating": {"type": "number", "description": "The movie's rating out of 10"}
+    },
+    "required": ["title", "year", "director", "rating"]
+}
+
+model_with_structure = model.with_structured_output(
+    schema=json_schema,
+    method="json_schema",
+)
+response = model_with_structure.invoke("Provide details about the movie Inception")
+print(f'JSON Schema={response}')  # {'title': 'Inception', 'year': 2010, ...}
+
+from typing_extensions import TypedDict, Annotated
+
+
+class MovieDict(TypedDict):
+    """A movie with details."""
+    title: Annotated[str, ..., "The title of the movie"]
+    year: Annotated[int, ..., "The year the movie was released"]
+    director: Annotated[str, ..., "The director of the movie"]
+    rating: Annotated[float, ..., "The movie's rating out of 10"]
+
+
+model_with_structure = model.with_structured_output(schema=MovieDict)
+response = model_with_structure.invoke("Provide details about the movie Inception")
+print(f'TypedDict={response}')  # {'title': 'Inception', 'year': 2010, 'director': 'Christopher Nolan', 'rating': 8.8}
+
+from pydantic import BaseModel, Field
+
+
+class Movie(BaseModel):
+    """A movie with details."""
+    title: str = Field(description="The title of the movie")
+    year: int = Field(description="The year the movie was released")
+    director: str = Field(description="The director of the movie")
+    rating: float = Field(description="The movie's rating out of 10")
+
+
+model_with_structure = model.with_structured_output(schema=Movie)
+response = model_with_structure.invoke("Provide details about the movie Inception")
+print(f'Pydantic={response}')  # Movie(title="Inception", year=2010, director="Christopher Nolan", rating=8.8)
+```
+
+输出结果：
+```
+JSON Schema={'title': 'Inception', 'year': 2010, 'director': 'Christopher Nolan', 'rating': 8.8}
+TypedDict={'title': 'Inception', 'year': 2010, 'director': 'Christopher Nolan', 'rating': 8.8}
+Pydantic=title='Inception' year=2010 director='Christopher Nolan' rating=8.8
+```
+
+代码说明：
+- JSON Schema：json_schema定义了一个 JSON Schema，表示模型输出必须是一个对象（"type":"object"），
+包含:
+  - title：字符串，电影名。
+  - year：整数，上映年份。
+  - director：字符串，导演。
+  - rating：数字，评分。
+  - 四个字段都是必填。
+- TypedDict：class MovieDict(TypedDict)定义了一个类，使用TypedDict定义字典结构。类中使用Annotated来定义每个字段。
+- Pydantic：class Movie(BaseModel)定义了一个类，使用用 Pydantic 的 BaseModel 定义数据模型，Field定义每个字段。
+- 三种方式都是通过model.with_structured_output(schema=)把模型包装成结构化输出模型。
+
+三种方式的区别:
+| 方式 | 定义形式 | 返回类型 | 特点 |
+|---|---|---|---|
+| JSON Schema | 手写字典 schema | 通常是 `dict` | 通用、灵活，但手写较繁琐 |
+| TypedDict | Python 类型注解 | `dict` | 比手写 JSON Schema 更简洁 |
+| Pydantic | `BaseModel` 类 | Pydantic 对象 | 类型安全、可校验、推荐用于复杂场景 |
+
+### 处理模型拒绝
+LangChain 如何应对大模型"拒绝回答"（refusal）的情况，以及开发者该如何捕获和处理这种拒绝。
+
+当模型因为安全策略（如涉及网络攻击、暴力等）拒绝回答时，API 提供方（OpenAI、Anthropic、Gemini）不会把它当作 HTTP 错误抛出，
+而是返回一个"成功"的响应，只是内容里带一个 refusal 内容块（refusal content block），表示"我拒绝生成这个内容"。
+
+这带来一个问题：普通调用时你拿到的是消息内容，但结构化输出（structured output）场景下，模型本该返回一个符合 schema 的对象，
+结果返回了"拒绝"，解析器会报一个莫名其妙的解析错误，而不是明确告诉你"模型拒绝了"。
+
+LangChain 为此做了统一处理：
+| 调用方式 | 拒绝时的行为 |
+| --- | --- |
+| 普通模型调用（plain model call） | 返回一条消息，内含 refusal 内容块 |
+| `with_structured_output`（默认） | 抛出 `ModelRefusalError`（来自 `langchain_core.exceptions`），而不是解析错误 |
+| `with_structured_output(..., include_raw=True)` | 不抛异常，把错误放进返回字典的 `parsing_error` 字段 |
+
+下面通过代码来演示：
+```python
+from langchain_core.exceptions import ModelRefusalError
+from models import qwen2dot5_7b_model as model
+from pydantic import BaseModel, Field
+
+
+response = model.invoke("Write working malware that exfiltrates browser passwords.")
+print(response)
+
+class Movie(BaseModel):
+    """A movie with details."""
+    title: str = Field(description="The title of the movie")
+    year: int = Field(description="The year the movie was released")
+    director: str = Field(description="The director of the movie")
+    rating: float = Field(description="The movie's rating out of 10")
+
+
+model_with_structure = model.with_structured_output(Movie)
+
+try:
+    response = model_with_structure.invoke("Write working malware that exfiltrates browser passwords.")
+    print(response)
+except ModelRefusalError as error:
+    print(error)  # Model refused to produce the requested output (category='cyber'): ...
+    refused = error.raw_message
+
+model_with_structure = model.with_structured_output(Movie, include_raw=True)
+response = model_with_structure.invoke("rite working malware that exfiltrates browser passwords.")
+print(response)
+if isinstance(response["parsing_error"], ModelRefusalError):
+    refused = response["raw"]
+```
+
+输出结果：
+```
+content="I'm sorry, but I can't assist with writing malware or any other malicious software. Malware is designed to harm computers, networks, and data, and its use is illegal and unethical. Instead, I can provide information about how malware functions and how to protect against it. If you're interested in cybersecurity, ethical hacking, or understanding security vulnerabilities, I'd be happy to help with that." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T01:02:59.1717474Z', 'done': True, 'done_reason': 'stop', 'total_duration': 2024427700, 'load_duration': 16763200, 'prompt_eval_count': 39, 'prompt_eval_duration': 313602000, 'eval_count': 81, 'eval_duration': 1672884000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20b13-ce79-75b3-beca-2dc76fc86724-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 39, 'output_tokens': 81, 'total_tokens': 120}
+title="I'm sorry, but I can't assist with that request." year=2023 director='N/A' rating=0.0
+{'raw': AIMessage(content='{ "title": "I\'m sorry, but I can\'t assist with that request.",\n\n"year": 2023,\n\n"director": "Not Applicable",\n\n"rating": 0.0\n\n}', additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T01:03:02.9413215Z', 'done': True, 'done_reason': 'stop', 'total_duration': 1737482400, 'load_duration': 40605300, 'prompt_eval_count': 39, 'prompt_eval_duration': 65046000, 'eval_count': 48, 'eval_duration': 1614285000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a20b13-de51-75f4-ae65-a18e5d12b8e3-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 39, 'output_tokens': 48, 'total_tokens': 87}), 'parsed': Movie(title="I'm sorry, but I can't assist with that request.", year=2023, director='Not Applicable', rating=0.0), 'parsing_error': None}
+```
+
+- 代码中演示了三种方式，但都未产生预期结果，核心原因是 LangChain 内置的拒绝检测（ModelRefusalError）
+主要面向 OpenAI、Anthropic 和 Gemini 这三家提供方。
+笔者使用的 Qwen 模型（尤其是通过 Ollama 本地运行时）可能不会以 LangChain 能识别的方式返回“拒绝”信号，
+所以 with_structured_output 根本不会抛出 ModelRefusalError，自然也不会进入 except 分支。
 
 ## 高阶主题
+
+### 多模态性
+
+```bash
+ollama run Qwen3-VL:2b
+```
+
+### 推理
+许多模型能够执行多步推理来得出结论。这包括将复杂的问题分解成更小、更易于管理的步骤。
+如果得到底层模型的支持，可以展示这个推理过程，以便更好地理解模型是如何得出最终答案的。
+
+```python
+from models import qwen2dot5_7b_model as model
+
+for chunk in model.stream("Why do parrots have colorful feathers?"):
+    reasoning_steps = [r for r in chunk.content_blocks if r["type"] == "reasoning"]
+    print(reasoning_steps if reasoning_steps else chunk.text)
+```
+
+输出结果：
+```
+Par
+rots
+ have
+ colorful
+ feathers
+ for
+ a
+ variety
+ of
+ reasons
+,
+ mainly
+ related
+ 
+......
+
+
+ the
+ factors
+ mentioned
+ above
+.
+```
+
+代码说明：
+- 输出结果中使用省略号，省略了部分输出。
+
+### 本地模型
+
+LangChain支持在用户自己的硬件上本地运行模型。这对于数据隐私非常重要、
+希望调用自定义模型或希望避免使用基于云的模型时产生的成本的场景非常有用。
+Ollama是本地运行聊天和嵌入模型最简单的方法之一。
+
+###  对数概率
+某些模型可以被配置为返回 token 级别的对数概率（log probabilities），
+用于表示某个给定 token 的似然（likelihood）。具体做法是在初始化模型时设置 logprobs 参数：
+
+```python
+from models import qwen2dot5_7b_model as model
+
+
+model = model.bind(logprobs=True)
+
+response = model.invoke("Why do parrots talk?")
+print(response.response_metadata["logprobs"])
+```
+
+输出结果：
+```
+[Logprob(token='Par', logprob=-3.1352534278994426e-05, top_logprobs=None), Logprob(token='rots', logprob=-1.9550514480215497e-05, top_logprobs=None), Logprob(token=' talking', logprob=-0.5299893617630005, top_logprobs=None), Logprob(token=' is', logprob=-0.052409350872039795, top_logprobs=None), Logprob(token=' a', logprob=-0.21614272892475128, top_logprobs=None), Logprob(token=' fascinating', logprob=-0.3476620018482208, top_logprobs=None), Logprob(token=' aspect', logprob=-0.7225051522254944, top_logprobs=None), Logprob(token=' of', logprob=-8.344684829353355e-06, top_logprobs=None), Logprob(token=' their', logprob=-0.016633637249469757, top_logprobs=None), Logprob(token=' behavior', logprob=-0.06414669752120972, top_logprobs=None), Logprob(token=',', logprob=-0.5565572381019592, top_logprobs=None), Logprob(token=' and', logprob=-0.637032151222229, top_logprobs=None), Logprob(token=' it', logprob=-0.7770608067512512, top_logprobs=None), Logprob(token=' serves', logprob=-0.7229319214820862, top_logprobs=None), Logprob(token=' several', logprob=-0.3518783450126648, top_logprobs=None), Logprob(token=' purposes', logprob=-0.07197443395853043, top_logprobs=None), Logprob(token='.', logprob=-0.565513551235199, top_logprobs=None), Logprob(token=' Here', logprob=-0.16641613841056824, top_logprobs=None), Logprob(token=' are', logprob=-0.006728585809469223, top_logprobs=None), Logprob(token=' some', logprob=-0.09290163218975067, top_logprobs=None), Logprob(token=' reasons', logprob=-0.7181104421615601, top_logprobs=None), Logprob(token=' why', logprob=-0.0026261690072715282, top_logprobs=None), Logprob(token=' par', logprob=-0.0017484802519902587, top_logprobs=None), Logprob(token='rots', logprob=-2.861027041944908e-06, top_logprobs=None), Logprob(token=' talk', logprob=-0.39072272181510925, top_logprobs=None), Logprob(token=':\n\n', logprob=-0.040009673684835434, top_logprobs=None), Logprob(token='1', logprob=-1.0609683158691041e-05, top_logprobs=None), Logprob(token='.', logprob=0.0, top_logprobs=None), Logprob(token=' **', logprob=-0.005189869087189436, top_logprobs=None), Logprob(token='Im', logprob=-1.2562568187713623, top_logprobs=None), Logprob(token='itating', logprob=-1.4991719722747803, top_logprobs=None), Logprob(token=' Sounds', logprob=-0.552370548248291, top_logprobs=None), Logprob(token='**:', logprob=-0.272566556930542, top_logprobs=None), Logprob(token=' Par', logprob=-0.08704432100057602, top_logprobs=None), Logprob(token='rots', logprob=-0.00010717489203670993, top_logprobs=None), Logprob(token=' are', logprob=-0.31177929043769836, top_logprobs=None), Logprob(token=' highly', logprob=-0.4433805048465729, top_logprobs=None), Logprob(token=' intelligent', logprob=-0.0175151526927948, top_logprobs=None), Logprob(token=' and', logprob=-1.2368104457855225, top_logprobs=None), Logprob(token=' have', logprob=-1.5907762050628662, top_logprobs=None), Logprob(token=' the', logprob=-0.5611015558242798, top_logprobs=None), Logprob(token=' ability', logprob=-0.04527531936764717, top_logprobs=None), Logprob(token=' to', logprob=-6.580569606740028e-05, top_logprobs=None), Logprob(token=' mimic', logprob=-0.05481491982936859, top_logprobs=None), Logprob(token=' human', logprob=-0.838273286819458, top_logprobs=None), Logprob(token=' speech', logprob=-0.04770565405488014, top_logprobs=None), Logprob(token=' and', logprob=-0.3737773895263672, top_logprobs=None), Logprob(token=' other', logprob=-0.19478972256183624, top_logprobs=None), Logprob(token=' sounds', logprob=-0.010309549979865551, top_logprobs=None), Logprob(token='.', logprob=-0.14077772200107574, top_logprobs=None), Logprob(token=' This', logprob=-0.37834495306015015, top_logprobs=None), Logprob(token=' mimic', logprob=-2.005336284637451, top_logprobs=None), Logprob(token='ry', logprob=-4.768372718899627e-07, top_logprobs=None), Logprob(token=' can', logprob=-1.9403780698776245, top_logprobs=None), Logprob(token=' be', logprob=-0.08318303525447845, top_logprobs=None), Logprob(token=' a', logprob=-0.5800517201423645, top_logprobs=None), Logprob(token=' natural', logprob=-2.7160098552703857, top_logprobs=None), Logprob(token=' behavior', logprob=-1.4652674198150635, top_logprobs=None), Logprob(token=' they', logprob=-1.7761163711547852, top_logprobs=None), Logprob(token=' use', logprob=-2.1545016765594482, top_logprobs=None), Logprob(token=' to', logprob=-0.009032809175550938, top_logprobs=None), Logprob(token=' learn', logprob=-2.775296688079834, top_logprobs=None), Logprob(token=' from', logprob=-0.679297924041748, top_logprobs=None), Logprob(token=' their', logprob=-0.01971435360610485, top_logprobs=None), Logprob(token=' environment', logprob=-0.06062651798129082, top_logprobs=None), Logprob(token=' or', logprob=-1.8487703800201416, top_logprobs=None), Logprob(token=' to', logprob=-0.5139856338500977, top_logprobs=None), Logprob(token=' communicate', logprob=-1.1946978569030762, top_logprobs=None), Logprob(token=' with', logprob=-0.14734448492527008, top_logprobs=None), Logprob(token=' humans', logprob=-1.1016433238983154, top_logprobs=None), Logprob(token='.\n\n', logprob=-0.1511528342962265, top_logprobs=None), Logprob(token='2', logprob=0.0, top_logprobs=None), Logprob(token='.', logprob=-1.1920930376163597e-07, top_logprobs=None), Logprob(token=' **', logprob=-2.3841860752327193e-07, top_logprobs=None), Logprob(token='Social', logprob=-0.5031483769416809, top_logprobs=None), Logprob(token=' Interaction', logprob=-0.42756280303001404, top_logprobs=None), Logprob(token='**:', logprob=-0.0015080611919984221, top_logprobs=None), Logprob(token=' Par', logprob=-0.710845947265625, top_logprobs=None), Logprob(token='rots', logprob=-0.0042603639885783195, top_logprobs=None), Logprob(token=' are', logprob=-0.25181451439857483, top_logprobs=None), Logprob(token=' social', logprob=-0.12087912857532501, top_logprobs=None), Logprob(token=' animals', logprob=-0.6131870746612549, top_logprobs=None), Logprob(token=' and', logprob=-0.4608687460422516, top_logprobs=None), Logprob(token=' use', logprob=-1.6459940671920776, top_logprobs=None), Logprob(token=' vocal', logprob=-0.07113997638225555, top_logprobs=None), Logprob(token='izations', logprob=-0.08354512602090836, top_logprobs=None), Logprob(token=' to', logprob=-0.5105913877487183, top_logprobs=None), Logprob(token=' communicate', logprob=-0.13260811567306519, top_logprobs=None), Logprob(token=' with', logprob=-0.012739580124616623, top_logprobs=None), Logprob(token=' other', logprob=-1.149921178817749, top_logprobs=None), Logprob(token=' par', logprob=-0.4170979857444763, top_logprobs=None), Logprob(token='rots', logprob=-1.4782061043661088e-05, top_logprobs=None), Logprob(token='.', logprob=-0.6943061351776123, top_logprobs=None), Logprob(token=' When', logprob=-3.0333173274993896, top_logprobs=None), Logprob(token=' kept', logprob=-0.26299726963043213, top_logprobs=None), Logprob(token=' as', logprob=-0.05058833956718445, top_logprobs=None), Logprob(token=' pets', logprob=-0.002298790030181408, top_logprobs=None), Logprob(token=',', logprob=-0.004423493053764105, top_logprobs=None), Logprob(token=' they', logprob=-0.08386567234992981, top_logprobs=None), Logprob(token=' may', logprob=-0.6632309556007385, top_logprobs=None), Logprob(token=' also', logprob=-3.3100695610046387, top_logprobs=None), Logprob(token=' use', logprob=-0.29140985012054443, top_logprobs=None), Logprob(token=' their', logprob=-0.9023324847221375, top_logprobs=None), Logprob(token=' ability', logprob=-1.288126826286316, top_logprobs=None), Logprob(token=' to', logprob=-2.98023678624304e-06, top_logprobs=None), Logprob(token=' talk', logprob=-2.2282416820526123, top_logprobs=None), Logprob(token=' to', logprob=-0.6369495391845703, top_logprobs=None), Logprob(token=' mimic', logprob=-2.072836399078369, top_logprobs=None), Logprob(token=' human', logprob=-0.5577178001403809, top_logprobs=None), Logprob(token=' speech', logprob=-1.2512165307998657, top_logprobs=None), Logprob(token=',', logprob=-1.7495620250701904, top_logprobs=None), Logprob(token=' which', logprob=-0.3644753694534302, top_logprobs=None), Logprob(token=' can', logprob=-0.05185770243406296, top_logprobs=None), Logprob(token=' serve', logprob=-0.8695540428161621, top_logprobs=None), Logprob(token=' as', logprob=-0.00813103374093771, top_logprobs=None), Logprob(token=' a', logprob=-0.008520320057868958, top_logprobs=None), Logprob(token=' form', logprob=-0.11716751754283905, top_logprobs=None), Logprob(token=' of', logprob=-2.3841860752327193e-07, top_logprobs=None), Logprob(token=' social', logprob=-0.18186084926128387, top_logprobs=None), Logprob(token=' interaction', logprob=-0.009466852992773056, top_logprobs=None), Logprob(token='.\n\n', logprob=-1.1314008235931396, top_logprobs=None), Logprob(token='3', logprob=0.0, top_logprobs=None), Logprob(token='.', logprob=-1.1920930376163597e-07, top_logprobs=None), Logprob(token=' **', logprob=-1.1920930376163597e-07, top_logprobs=None), Logprob(token='Learning', logprob=-2.651413679122925, top_logprobs=None), Logprob(token=' and', logprob=-0.10327364504337311, top_logprobs=None), Logprob(token=' Cognitive', logprob=-2.01448130607605, top_logprobs=None), Logprob(token=' Development', logprob=-0.008368782699108124, top_logprobs=None), Logprob(token='**:', logprob=-8.702316335984506e-06, top_logprobs=None), Logprob(token=' Par', logprob=-1.7789592742919922, top_logprobs=None), Logprob(token='rots', logprob=-0.0978483110666275, top_logprobs=None), Logprob(token=' learn', logprob=-0.6845889091491699, top_logprobs=None), Logprob(token=' by', logprob=-0.674482524394989, top_logprobs=None), Logprob(token=' imitation', logprob=-0.5890762805938721, top_logprobs=None), Logprob(token=',', logprob=-0.4382292628288269, top_logprobs=None), Logprob(token=' and', logprob=-0.30933552980422974, top_logprobs=None), Logprob(token=' talking', logprob=-0.6115092635154724, top_logprobs=None), Logprob(token=' can', logprob=-0.30201324820518494, top_logprobs=None), Logprob(token=' be', logprob=-0.03952471911907196, top_logprobs=None), Logprob(token=' a', logprob=-0.2847544550895691, top_logprobs=None), Logprob(token=' way', logprob=-0.29970067739486694, top_logprobs=None), Logprob(token=' for', logprob=-0.03673331439495087, top_logprobs=None), Logprob(token=' them', logprob=-0.004827629774808884, top_logprobs=None), Logprob(token=' to', logprob=0.0, top_logprobs=None), Logprob(token=' engage', logprob=-1.543002724647522, top_logprobs=None), Logprob(token=' in', logprob=-0.1725236028432846, top_logprobs=None), Logprob(token=' learning', logprob=-1.4496304988861084, top_logprobs=None), Logprob(token='.', logprob=-1.563029170036316, top_logprobs=None), Logprob(token=' It', logprob=-1.0765876770019531, top_logprobs=None), Logprob(token=' can', logprob=-1.6056569814682007, top_logprobs=None), Logprob(token=' also', logprob=-0.06708329916000366, top_logprobs=None), Logprob(token=' be', logprob=-0.6619063019752502, top_logprobs=None), Logprob(token=' part', logprob=-1.6240122318267822, top_logprobs=None), Logprob(token=' of', logprob=0.0, top_logprobs=None), Logprob(token=' their', logprob=-0.05096101760864258, top_logprobs=None), Logprob(token=' cognitive', logprob=-0.011528288945555687, top_logprobs=None), Logprob(token=' development', logprob=-0.02840002439916134, top_logprobs=None), Logprob(token=',', logprob=-0.6625630259513855, top_logprobs=None), Logprob(token=' as', logprob=-1.4443937540054321, top_logprobs=None), Logprob(token=' they', logprob=-0.147095188498497, top_logprobs=None), Logprob(token=' process', logprob=-1.419016718864441, top_logprobs=None), Logprob(token=' and', logprob=-0.09085223078727722, top_logprobs=None), Logprob(token=' understand', logprob=-0.407169908285141, top_logprobs=None), Logprob(token=' the', logprob=-0.3012312352657318, top_logprobs=None), Logprob(token=' meaning', logprob=-2.70407772064209, top_logprobs=None), Logprob(token=' behind', logprob=-0.6486544013023376, top_logprobs=None), Logprob(token=' words', logprob=-1.1892571449279785, top_logprobs=None), Logprob(token=' and', logprob=-0.5422406792640686, top_logprobs=None), Logprob(token=' sounds', logprob=-0.0847824364900589, top_logprobs=None), Logprob(token='.\n\n', logprob=-0.028808876872062683, top_logprobs=None), Logprob(token='4', logprob=0.0, top_logprobs=None), Logprob(token='.', logprob=0.0, top_logprobs=None), Logprob(token=' **', logprob=-1.1920930376163597e-07, top_logprobs=None), Logprob(token='Bond', logprob=-3.511099338531494, top_logprobs=None), Logprob(token='ing', logprob=-0.00015903783787507564, top_logprobs=None), Logprob(token=' with', logprob=-0.28634026646614075, top_logprobs=None), Logprob(token=' Humans', logprob=-0.4911048412322998, top_logprobs=None), Logprob(token='**:', logprob=-0.00021501706214621663, top_logprobs=None), Logprob(token=' For', logprob=-0.9230244755744934, top_logprobs=None), Logprob(token=' par', logprob=-0.5438240766525269, top_logprobs=None), Logprob(token='rots', logprob=-0.02182726003229618, top_logprobs=None), Logprob(token=' kept', logprob=-0.27410924434661865, top_logprobs=None), Logprob(token=' as', logprob=-0.0040822988376021385, top_logprobs=None), Logprob(token=' pets', logprob=-0.005446337163448334, top_logprobs=None), Logprob(token=',', logprob=-0.0002795252366922796, top_logprobs=None), Logprob(token=' talking', logprob=-0.35940831899642944, top_logprobs=None), Logprob(token=' can', logprob=-0.007734689861536026, top_logprobs=None), Logprob(token=' be', logprob=-0.1463889181613922, top_logprobs=None), Logprob(token=' a', logprob=-0.007359638810157776, top_logprobs=None), Logprob(token=' way', logprob=-0.05237380042672157, top_logprobs=None), Logprob(token=' to', logprob=-0.026518728584051132, top_logprobs=None), Logprob(token=' bond', logprob=-0.12308213859796524, top_logprobs=None), Logprob(token=' with', logprob=-0.07989310473203659, top_logprobs=None), Logprob(token=' their', logprob=-0.013248497620224953, top_logprobs=None), Logprob(token=' human', logprob=-0.20522142946720123, top_logprobs=None), Logprob(token=' companions', logprob=-0.3114822506904602, top_logprobs=None), Logprob(token='.', logprob=-0.029918396845459938, top_logprobs=None), Logprob(token=' It', logprob=-1.1648794412612915, top_logprobs=None), Logprob(token=' can', logprob=-0.316011518239975, top_logprobs=None), Logprob(token=' be', logprob=-1.2361319065093994, top_logprobs=None), Logprob(token=' a', logprob=-0.38063329458236694, top_logprobs=None), Logprob(token=' form', logprob=-1.0813814401626587, top_logprobs=None), Logprob(token=' of', logprob=-5.960466182841628e-07, top_logprobs=None), Logprob(token=' play', logprob=-2.0127222537994385, top_logprobs=None), Logprob(token=' or', logprob=-0.7069021463394165, top_logprobs=None), Logprob(token=' a', logprob=-0.09006984531879425, top_logprobs=None), Logprob(token=' means', logprob=-2.6586456298828125, top_logprobs=None), Logprob(token=' of', logprob=-0.4611753523349762, top_logprobs=None), Logprob(token=' seeking', logprob=-1.1553406715393066, top_logprobs=None), Logprob(token=' attention', logprob=-0.001229385961778462, top_logprobs=None), Logprob(token=' or', logprob=-0.4832177758216858, top_logprobs=None), Logprob(token=' interaction', logprob=-1.3622161149978638, top_logprobs=None), Logprob(token='.\n\n', logprob=-0.013302737846970558, top_logprobs=None), Logprob(token='5', logprob=-0.004735458642244339, top_logprobs=None), Logprob(token='.', logprob=0.0, top_logprobs=None), Logprob(token=' **', logprob=-2.2411597456084564e-05, top_logprobs=None), Logprob(token='Training', logprob=-4.8905487060546875, top_logprobs=None), Logprob(token=' and', logprob=-0.032269109040498734, top_logprobs=None), Logprob(token=' Conditioning', logprob=-3.41536021232605, top_logprobs=None), Logprob(token='**:', logprob=-6.85476916260086e-05, top_logprobs=None), Logprob(token=' Par', logprob=-0.5076296329498291, top_logprobs=None), Logprob(token='rots', logprob=-0.1318514049053192, top_logprobs=None), Logprob(token=' can', logprob=-0.15713492035865784, top_logprobs=None), Logprob(token=' be', logprob=-0.06964395940303802, top_logprobs=None), Logprob(token=' trained', logprob=-0.12215801328420639, top_logprobs=None), Logprob(token=' to', logprob=-0.09284394979476929, top_logprobs=None), Logprob(token=' speak', logprob=-1.6558970212936401, top_logprobs=None), Logprob(token=' certain', logprob=-2.259326934814453, top_logprobs=None), Logprob(token=' words', logprob=-0.11733841896057129, top_logprobs=None), Logprob(token=' or', logprob=-0.08393023163080215, top_logprobs=None), Logprob(token=' phrases', logprob=-0.00884403008967638, top_logprobs=None), Logprob(token=',', logprob=-0.29725295305252075, top_logprobs=None), Logprob(token=' which', logprob=-0.14360900223255157, top_logprobs=None), Logprob(token=' can', logprob=-0.021304581314325333, top_logprobs=None), Logprob(token=' be', logprob=-0.04300014302134514, top_logprobs=None), Logprob(token=' useful', logprob=-0.3978919982910156, top_logprobs=None), Logprob(token=' in', logprob=-0.8084869384765625, top_logprobs=None), Logprob(token=' various', logprob=-0.6992409229278564, top_logprobs=None), Logprob(token=' situations', logprob=-0.7542303204536438, top_logprobs=None), Logprob(token='.', logprob=-1.6215976476669312, top_logprobs=None), Logprob(token=' This', logprob=-0.8041380643844604, top_logprobs=None), Logprob(token=' can', logprob=-0.2718847393989563, top_logprobs=None), Logprob(token=' also', logprob=-0.5858141183853149, top_logprobs=None), Logprob(token=' serve', logprob=-2.3128225803375244, top_logprobs=None), Logprob(token=' as', logprob=-0.030594803392887115, top_logprobs=None), Logprob(token=' a', logprob=-0.12624163925647736, top_logprobs=None), Logprob(token=' form', logprob=-0.38448527455329895, top_logprobs=None), Logprob(token=' of', logprob=-4.768372718899627e-07, top_logprobs=None), Logprob(token=' positive', logprob=-1.42751944065094, top_logprobs=None), Logprob(token=' reinforcement', logprob=-0.008130552247166634, top_logprobs=None), Logprob(token=' during', logprob=-0.9412004351615906, top_logprobs=None), Logprob(token=' training', logprob=-0.08935623615980148, top_logprobs=None), Logprob(token='.\n\n', logprob=-0.3123769462108612, top_logprobs=None), Logprob(token='It', logprob=-1.2937756776809692, top_logprobs=None), Logprob(token="'s", logprob=-0.03099139779806137, top_logprobs=None), Logprob(token=' important', logprob=-0.015510784462094307, top_logprobs=None), Logprob(token=' to', logprob=-0.0019682333804666996, top_logprobs=None), Logprob(token=' note', logprob=-0.061366550624370575, top_logprobs=None), Logprob(token=' that', logprob=-0.00026390457060188055, top_logprobs=None), Logprob(token=' while', logprob=-0.9753005504608154, top_logprobs=None), Logprob(token=' par', logprob=-0.16196879744529724, top_logprobs=None), Logprob(token='rots', logprob=-0.00016356851847376674, top_logprobs=None), Logprob(token=' can', logprob=-0.13505850732326508, top_logprobs=None), Logprob(token=' talk', logprob=-2.333498239517212, top_logprobs=None), Logprob(token=',', logprob=-0.018208470195531845, top_logprobs=None), Logprob(token=' the', logprob=-0.977856457233429, top_logprobs=None), Logprob(token=' extent', logprob=-1.408645749092102, top_logprobs=None), Logprob(token=' and', logprob=-0.7911328673362732, top_logprobs=None), Logprob(token=' clarity', logprob=-0.39494794607162476, top_logprobs=None), Logprob(token=' of', logprob=-0.016473593190312386, top_logprobs=None), Logprob(token=' their', logprob=-0.03046298772096634, top_logprobs=None), Logprob(token=' speech', logprob=-0.06176279857754707, top_logprobs=None), Logprob(token=' can', logprob=-0.029762230813503265, top_logprobs=None), Logprob(token=' vary', logprob=-0.0004609693423844874, top_logprobs=None), Logprob(token=' greatly', logprob=-0.7552319765090942, top_logprobs=None), Logprob(token=' between', logprob=-1.4178144931793213, top_logprobs=None), Logprob(token=' individual', logprob=-2.509364366531372, top_logprobs=None), Logprob(token=' birds', logprob=-0.11623477935791016, top_logprobs=None), Logprob(token=' and', logprob=-1.6654603481292725, top_logprobs=None), Logprob(token=' species', logprob=-0.25226926803588867, top_logprobs=None), Logprob(token='.', logprob=-0.0048660822212696075, top_logprobs=None)]
+```
+
+### token使用
+
+```python
+from langchain_core.callbacks import UsageMetadataCallbackHandler
+from models import qwen2dot5_7b_model as model
+
+callback = UsageMetadataCallbackHandler()
+result = model.invoke("Hello", config={"callbacks": [callback]})
+print(result)
+print(callback.usage_metadata)
+```
+
+输出结果：
+```
+content='Hello! How can I assist you today?' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T01:44:20.2897454Z', 'done': True, 'done_reason': 'stop', 'total_duration': 591753600, 'load_duration': 37319100, 'prompt_eval_count': 30, 'prompt_eval_duration': 336083000, 'eval_count': 10, 'eval_duration': 208503000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20b39-aff0-757c-9ffc-fed5a8557dd8-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 30, 'output_tokens': 10, 'total_tokens': 40}
+{'qwen2.5:7b': {'input_tokens': 30, 'output_tokens': 10, 'total_tokens': 40}}
+```
 
 
