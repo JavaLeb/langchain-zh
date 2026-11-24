@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# 模型
+# 模型（Models）
 LLM（大语言模型，Large Language Model）是强大的人工智能工具，可以像人类一样解释和生成文本。他们足够多才多艺，可以写内容、翻译语言、总结和回答问题，而不需要针对每个任务进行专门的培训。
 
 许多模型除了文本生成之外，还支持：
@@ -693,11 +693,128 @@ title="I'm sorry, but I can't assist with that request." year=2023 director='N/A
 所以 with_structured_output 根本不会抛出 ModelRefusalError，自然也不会进入 except 分支。
 
 ## 高阶主题
+### 模型配置文件
+LangChain聊天模型可以通过配置文件属性公开支持的特性和功能的字典。
+
+代码如下：
+```python
+from models import qwen2dot5_7b_model as model
+from langchain.chat_models import init_chat_model
+
+import langchain_core
+print("langchain-core:", langchain_core.__version__)
+
+print("has profile attr:", hasattr(model, "profile"))
+print("profile repr:", repr(getattr(model, "profile", "<no attr>")))
+print("model type:", type(model))
+print("model name:", getattr(model, "model_name", None) or getattr(model, "model", None))
+
+print(model.profile)
+
+custom_profile = {
+    "max_input_tokens": 100_000,
+    "tool_calling": True,
+    "structured_output": True,
+}
+model = init_chat_model("ollama:qwen2.5:7b", profile=custom_profile)
+print(model.profile)
+```
+
+输出结果：
+```
+langchain-core: 1.8.4
+has profile attr: True
+profile repr: None
+model type: <class 'langchain_ollama.chat_models.ChatOllama'>
+model name: qwen2.5:7b
+None
+{'max_input_tokens': 100000, 'tool_calling': True, 'structured_output': True}
+```
+
 
 ### 多模态性
+某些模型可以处理和输入非文本数据，如图像、音频和视频。下面以Qwen3-VL:2b模型给出一张关于猫的图片描述为例。首先
+使用Ollama安装并运行该模型
+
+
 
 ```bash
 ollama run Qwen3-VL:2b
+```
+
+猫的图片：
+![Cat](/img/models/cat.png)
+
+
+代码如下：
+```python
+from models import qwen3_VL_2b_model as model
+import base64
+from pathlib import Path
+from langchain_core.messages import HumanMessage
+
+
+def image_to_data_url(image_path: str) -> str:
+    """把本地图片编码成 Ollama 可识别的 base64 data URL。"""
+    path = Path(image_path)
+    if not path.exists():
+        raise FileNotFoundError(f"图片不存在: {image_path}")
+
+    mime_map = {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "webp": "image/webp",
+    }
+    mime = mime_map.get(path.suffix.lower().lstrip("."), "image/jpeg")
+    b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
+    return f"data:{mime};base64,{b64}"
+
+
+# 2. 把猫图片编码为 data URL
+image_url = image_to_data_url("../../data/cat.png")   # ← 换成你的猫图片路径
+
+# 3. 构建多模态消息
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "请详细描述这张图片中的内容。"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ]
+)
+
+# 4. 调用模型并打印描述
+response = model.invoke([message])
+
+print("---- 模型描述 ----")
+print(response.content)
+
+# 如果 content_blocks 有内容，也可以查看结构化块
+if response.content_blocks:
+    print("\n---- content_blocks ----")
+    print(response.content_blocks)
+```
+
+输出结果：
+```
+---- 模型描述 ----
+这张图片展现了一只**大型长毛猫**在户外草地上行走的生动场景，画面聚焦于猫的动态与细节，背景则通过虚化处理营造出自然清新的氛围。  
+
+### 主体猫咪  
+- **品种特征**：猫的体型健壮，属于典型的大型猫种，毛发浓密且修长，整体毛色以灰白为主，夹杂着深灰色斑纹，毛发质感蓬松柔软，显示出其作为长毛猫的特征。  
+- **形态细节**：  
+  - 头部：猫的耳朵竖立，耳尖微微上翘，眼睛明亮透亮呈浅黄色，眼神专注而警觉；鼻尖小巧，嘴巴周围长有清晰的白色胡须，显得灵动俏皮。  
+  - 身体与毛发：躯干部分毛发较长，覆盖着浅灰与白色交织的斑纹，颈部和胸部的毛发特别蓬松，形成层次感；前爪抬起，后爪紧随，呈现出一种轻盈而充满活力的步态。  
+  - 尾巴：尾巴修长且蓬松，毛发在动态中呈现出凌乱的动感，尾部毛发灰白相间，仿佛在摆动中，为画面增添了生动的动态感。  
+
+### 背景环境  
+- **草地与光线**：背景是一片生机勃勃的绿色草地，草叶鲜绿且细腻，地面上散落着零星的草叶与小花，传递出自然清新的气息。远处的背景因浅景深效果而模糊，呈现出深色的暗调，隐约可见树木或灌木的轮廓，与前景的明亮草地形成鲜明对比，使猫咪成为视觉焦点。  
+- **氛围营造**：整体光线柔和，色调清新自然，突出了猫咪的灵动与优雅，营造出一种充满生机与活力的户外场景，仿佛猫正从一片绿意中踏步而来，展现出自然界的活力与宁静。  
+
+### 整体效果  
+画面通过主体猫的动态姿态、浓密的毛发细节，与背景柔和的草地和虚化的深色环境形成对比，既突出了猫咪的可爱与优雅，又传递出一种自然、宁静又充满生机的氛围，给人一种身临其境的自然观感。
+
+---- content_blocks ----
+[{'type': 'text', 'text': '这张图片展现了一只**大型长毛猫**在户外草地上行走的生动场景，画面聚焦于猫的动态与细节，背景则通过虚化处理营造出自然清新的氛围。  \n\n### 主体猫咪  \n- **品种特征**：猫的体型健壮，属于典型的大型猫种，毛发浓密且修长，整体毛色以灰白为主，夹杂着深灰色斑纹，毛发质感蓬松柔软，显示出其作为长毛猫的特征。  \n- **形态细节**：  \n  - 头部：猫的耳朵竖立，耳尖微微上翘，眼睛明亮透亮呈浅黄色，眼神专注而警觉；鼻尖小巧，嘴巴周围长有清晰的白色胡须，显得灵动俏皮。  \n  - 身体与毛发：躯干部分毛发较长，覆盖着浅灰与白色交织的斑纹，颈部和胸部的毛发特别蓬松，形成层次感；前爪抬起，后爪紧随，呈现出一种轻盈而充满活力的步态。  \n  - 尾巴：尾巴修长且蓬松，毛发在动态中呈现出凌乱的动感，尾部毛发灰白相间，仿佛在摆动中，为画面增添了生动的动态感。  \n\n### 背景环境  \n- **草地与光线**：背景是一片生机勃勃的绿色草地，草叶鲜绿且细腻，地面上散落着零星的草叶与小花，传递出自然清新的气息。远处的背景因浅景深效果而模糊，呈现出深色的暗调，隐约可见树木或灌木的轮廓，与前景的明亮草地形成鲜明对比，使猫咪成为视觉焦点。  \n- **氛围营造**：整体光线柔和，色调清新自然，突出了猫咪的灵动与优雅，营造出一种充满生机与活力的户外场景，仿佛猫正从一片绿意中踏步而来，展现出自然界的活力与宁静。  \n\n### 整体效果  \n画面通过主体猫的动态姿态、浓密的毛发细节，与背景柔和的草地和虚化的深色环境形成对比，既突出了猫咪的可爱与优雅，又传递出一种自然、宁静又充满生机的氛围，给人一种身临其境的自然观感。'}]
 ```
 
 ### 推理
@@ -747,6 +864,167 @@ LangChain支持在用户自己的硬件上本地运行模型。这对于数据�
 希望调用自定义模型或希望避免使用基于云的模型时产生的成本的场景非常有用。
 Ollama是本地运行聊天和嵌入模型最简单的方法之一。
 
+### 提示词缓存
+许多提供商提供提示缓存（prompt caching）功能，以减少重复处理相同 token 时的延迟和成本。你可以从三个层面启用缓存：
+
+- 隐式提供商缓存：如果请求命中缓存，提供商会自动将成本节省传递给你，无需任何配置。示例：OpenAI 和 Gemini。
+- 提供商级显式控制：提供商允许你手动指定缓存点，以便获得更强的控制力或确保成本节省。这些控制方式与底层提供商/API 的行为相对应。示例：
+  - ChatOpenAI（通过 prompt_cache_key）
+  - Anthropic 内容块 cache_control
+  - Gemini
+  - AWS Bedrock cachePoint 块
+- LangChain 中间件：对于智能体（agents），中间件允许 LangChain 优化稳定系统提示词和工具内容的缓存。示例：
+  - Anthropic 的 AnthropicPromptCachingMiddleware
+  - AWS Bedrock 的 BedrockPromptCachingMiddleware
+
+### 服务器端工具使用
+
+一些提供商支持服务器端工具调用循环：模型可以与web搜索、代码解释器和其他工具交互，并在单个会话回合中分析结果。
+
+如果模型调用服务器端工具，则响应消息的内容将包括表示工具调用和结果的内容。
+访问响应的内容块将返回服务器端工具调用，并以与提供商无关的格式返回结果。
+
+需要模型支持调用服务端工具访问，而不是调用用户自定义工具。
+
+代码如下：
+```python
+from models import qwen2dot5_7b_model as model
+
+tool = {"type": "web_search"}
+model_with_tools = model.bind_tools([tool])
+response = model_with_tools.invoke("What was a positive news story from today?")
+print(response.content_blocks)
+```
+
+输出结果：
+```
+[{'type': 'text', 'text': "I don't have real-time data access to fetch the latest news. However, you can find positive news stories from reliable news sources such as BBC, CNN, or local news websites. Would you like me to provide you with a list of general positive topics that are often covered in the news?"}]
+```
+
+- qwen2.5:7b模型并没有内置的服务端工具给模型使用，因此结果中并未调用web_search。
+- 读者可以更换一个支持服务端工具调用的模型，使用上述代码，来实现服务端工具调用。
+
+### 模型异常
+
+主要的集成包从langchain_core中抛出标准异常类型。常见模型故障的异常，
+例如身份验证错误、速率限制和超时。这些异常继承了LangChain基类型和提供商SDK自己的异常类型，所以可以捕获任何一个。
+
+代码如下：
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.exceptions import ModelNotFoundError, ModelTimeoutError, ModelConnectionError
+
+# 关键修改：使用一个不存在的模型名
+model = init_chat_model("ollama:qwen2.5:7b1")
+
+try:
+    response = model.invoke("Hello")
+    print(response)
+except ModelTimeoutError:
+    print("caught: ModelTimeoutError")
+except ModelNotFoundError:
+    print("caught: ModelNotFoundError")
+except ModelConnectionError:
+    print("caught: ModelConnectionError")
+except Exception as e:
+    # Ollama 对未知模型通常抛出 ollama._types.ResponseError (status_code=404)
+    print(f"caught: {type(e).__name__} | status_code={getattr(e, 'status_code', None)}")
+    print(f"原始信息: {e}")
+```
+
+输出结果：
+```
+caught: ResponseError | status_code=404
+原始信息: model 'qwen2.5:7b1' not found (status code: 404)
+```
+
+
+
+异常类型（Exception types）
+- ModelAuthenticationError — API 密钥缺失、无效或已过期（不可重试）
+- ModelPermissionDeniedError — 凭证缺少相应权限（不可重试）
+- ModelInvalidRequestError — 提供方拒绝了该请求（不可重试）
+- ModelNotFoundError — 请求的模型不存在（不可重试）
+- ModelRateLimitError — 超出提供方的速率限制（可重试）
+- ModelAPIError — 提供方服务器故障（可重试）
+- ModelConnectionError — 无法连接到提供方（可重试）
+- ModelTimeoutError — 请求超时（可重试）
+- ContextOverflowError — 输入超出模型的上下文长度上限（不可重试）
+
+每种类型都带有一个is_retryable属性，重试中间件在默认情况下尊重该属性。
+
+### 速率限制
+代码如下：
+```python
+from langchain.rate_limiters import InMemoryRateLimiter
+from langchain.chat_models import init_chat_model
+import time
+
+rate_limiter = InMemoryRateLimiter(
+    requests_per_second=0.1,  # 1 request every 10s
+    check_every_n_seconds=0.1,  # Check every 100ms whether allowed to make a request
+    max_bucket_size=1,  # Controls the maximum burst size.
+)
+
+model = init_chat_model(
+    model="qwen2.5:7b",
+    model_provider="ollama",
+    rate_limiter=rate_limiter
+)
+
+for i in range(4):
+    tic = time.time()
+    response = model.invoke("Say hello briefly.")
+    toc = time.time()
+    print(f"Call {i + 1}: 耗时 {toc - tic:.2f}s | 回复: {response.content[:40]!r}")
+```
+
+输出结果：
+```
+Call 1: 耗时 10.28s | 回复: 'Hello! Nice to meet you.'
+Call 2: 耗时 10.24s | 回复: 'Hello! Nice to meet you.'
+Call 3: 耗时 9.88s | 回复: 'Hello! Nice to meet you.'
+Call 4: 耗时 10.30s | 回复: 'Hello! Nice to meet you.'
+```
+
+代码说明：
+
+
+
+### Base URL和代理设置
+
+许多模型提供商提供与OpenAI兼容的api（例如，Together AI, vLLM）。
+可以通过指定适当的base_url参数来使用init_chat_model。
+
+代码如下：
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model(
+    model="qwen2.5:7b",
+    model_provider="ollama",
+    base_url="http://localhost:11434",
+    api_key="YOUR_API_KEY",
+)
+```
+
+代码说明：
+- base_url是Ollama的本地访问地址和端口，如果要兼容OpenAI的api使用http://localhost:11434/v1。
+- Ollama本地模型不需要api_key，因此它可以设置成任意非空的字符串。
+
+对于需要HTTP代理的部署，一些模型集成支持代理配置。
+
+代码如下：
+```python
+from langchain_openai import ChatOpenAI
+
+model = ChatOpenAI(
+    model="gpt-6.1-sol",
+    openai_proxy="http://proxy.example.com:8080"
+)
+```
+
+
 ###  对数概率
 某些模型可以被配置为返回 token 级别的对数概率（log probabilities），
 用于表示某个给定 token 的似然（likelihood）。具体做法是在初始化模型时设置 logprobs 参数：
@@ -785,3 +1063,167 @@ content='Hello! How can I assist you today?' additional_kwargs={} response_metad
 ```
 
 
+### 调用配置
+代码如下：
+```python
+from models import qwen2dot5_7b_model as model
+from langchain_core.callbacks import BaseCallbackHandler
+
+
+class ConfigInspectorHandler(BaseCallbackHandler):
+    def on_chain_start(self, serialized, inputs, **kwargs):
+        # run_name, tags, metadata 会出现在 kwargs 或 config 参数中
+        print("--- Chain Start ---")
+        print("run_name:", kwargs.get("run_name"))
+        print("tags:", kwargs.get("tags"))
+        print("metadata:", kwargs.get("metadata"))
+
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        print("--- LLM Start ---")
+        print("run_name:", kwargs.get("run_name"))
+        # 配置信息同样会传递给 LLM 级别的回调
+        print("tags:", kwargs.get("tags"))
+        print("metadata:", kwargs.get("metadata"))
+
+
+my_callback_handler = ConfigInspectorHandler()
+response = model.invoke(
+    "Tell me a joke",
+    config={
+        "run_name": "joke_generation",  # Custom name for this run
+        "tags": ["humor", "demo"],  # Tags for categorization
+        "metadata": {"user_id": "123"},  # Custom metadata
+        "callbacks": [my_callback_handler],  # Callback handlers
+    }
+)
+
+print(response)
+```
+
+输出结果：
+```
+--- LLM Start ---
+run_name: None
+tags: ['humor', 'demo']
+metadata: {'user_id': '123', 'ls_provider': 'ollama', 'ls_model_name': 'qwen2.5:7b', 'ls_model_type': 'chat', 'ls_temperature': None, 'ls_integration': 'langchain_chat_model', 'lc_versions': {'langchain-core': '1.7.5', 'langchain': '1.4.8'}}
+content="Sure, here's a light joke for you:\n\nWhy don't scientists trust atoms?\n\nBecause they make up everything!" additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T02:48:26.8842896Z', 'done': True, 'done_reason': 'stop', 'total_duration': 862729900, 'load_duration': 48270100, 'prompt_eval_count': 33, 'prompt_eval_duration': 301340000, 'eval_count': 24, 'eval_duration': 505705000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20b74-60a1-72d3-bd93-d5b86f718bd5-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 33, 'output_tokens': 24, 'total_tokens': 57}
+```
+
+### 可配置的模型
+代码如下：
+```python
+from langchain.chat_models import init_chat_model
+from pydantic import BaseModel, Field
+
+model_identifier = "ollama:qwen2.5:7b"
+
+configurable_model = init_chat_model(temperature=0)
+response = configurable_model.invoke(
+    input="what's your name",
+    config={"configurable": {"model": model_identifier}},
+)
+print(response)
+
+first_model = init_chat_model(
+    model=model_identifier,
+    temperature=0,
+    configurable_fields=("model", "model_provider", "temperature", "max_tokens"),
+    config_prefix="first",  # Useful when you have a chain with multiple models
+)
+response = first_model.invoke("what's your name")
+print(response)
+
+response = first_model.invoke(
+    "what's your name",
+    config={
+        "configurable": {
+            "first_model": model_identifier,
+            "first_temperature": 0.5,
+            "first_max_tokens": 100,
+        }
+    },
+)
+print(response)
+
+
+class GetWeather(BaseModel):
+    """Get the current weather in a given location"""
+
+    location: str = Field(description="The city and state, e.g. San Francisco, CA")
+
+
+class GetPopulation(BaseModel):
+    """Get the current population in a given location"""
+
+    location: str = Field(description="The city and state, e.g. San Francisco, CA")
+
+
+model = init_chat_model(temperature=0)
+model_with_tools = model.bind_tools([GetWeather, GetPopulation])
+
+response = model_with_tools.invoke(
+    "what's bigger in 2024 LA or NYC", config={"configurable": {"model": model_identifier}}
+).tool_calls
+print(response)
+
+response = model_with_tools.invoke(
+    "what's bigger in 2024 LA or NYC",
+    config={"configurable": {"model": model_identifier}},
+).tool_calls
+print(response)
+```
+
+输出结果：
+```
+content="You can call me Qwen. I'm an AI assistant created by Alibaba Cloud. How can I assist you today?" additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T04:31:02.5979713Z', 'done': True, 'done_reason': 'stop', 'total_duration': 2800685600, 'load_duration': 2274836100, 'prompt_eval_count': 33, 'prompt_eval_duration': 39786000, 'eval_count': 25, 'eval_duration': 478160000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20bd2-46d3-73b4-9d02-8aa0668d053c-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 33, 'output_tokens': 25, 'total_tokens': 58}
+content="You can call me Qwen. I'm an AI assistant created by Alibaba Cloud. How can I assist you today?" additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T04:31:03.1433763Z', 'done': True, 'done_reason': 'stop', 'total_duration': 534400200, 'load_duration': 36428300, 'prompt_eval_count': 33, 'prompt_eval_duration': 19804000, 'eval_count': 25, 'eval_duration': 471796000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20bd2-51d0-71a3-aab1-decb9e8bf6ff-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 33, 'output_tokens': 25, 'total_tokens': 58}
+content="You can call me Qwen. I'm an AI assistant created by Alibaba Cloud. How can I assist you today?" additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T04:31:03.7002641Z', 'done': True, 'done_reason': 'stop', 'total_duration': 536073500, 'load_duration': 38125700, 'prompt_eval_count': 33, 'prompt_eval_duration': 19912000, 'eval_count': 25, 'eval_duration': 471930000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20bd2-53f1-778c-aba4-5f8cf59f1be0-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 33, 'output_tokens': 25, 'total_tokens': 58}
+[{'name': 'GetPopulation', 'args': {'location': 'Los Angeles, CA'}, 'id': '7962aa58-95b2-459a-9776-03a3f37e7acf', 'type': 'tool_call'}]
+[{'name': 'GetPopulation', 'args': {'location': 'Los Angeles, CA'}, 'id': 'b6fd458e-7221-4e3d-b17d-3d98540a00e6', 'type': 'tool_call'}]
+```
+
+### 动态模型选择
+
+代码如下：
+```python
+from langchain.agents import create_agent
+from langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse
+from models import qwen2dot5_7b_instruct_model as basic_model
+from models import qwen2dot5_7b_model as advanced_model
+
+
+@wrap_model_call
+def dynamic_model_selection(request: ModelRequest, handler) -> ModelResponse:
+    """Choose model based on conversation complexity."""
+    message_count = len(request.state["messages"])
+
+    if message_count > 1:
+        # Use an advanced model for longer conversations
+        model = advanced_model
+    else:
+        model = basic_model
+
+    return handler(request.override(model=model))
+
+
+agent = create_agent(
+    model=basic_model,  # Default model
+    tools=[],
+    middleware=[dynamic_model_selection]
+)
+
+messages = [{"role": "user", "content": "hello"}]
+
+response = agent.invoke(input={"messages": messages})
+print(response['messages'][-1].response_metadata)
+
+messages.append({"role": "user", "content": "my name is Tom!"})
+response = agent.invoke(input={"messages": messages})
+print(response['messages'][-1].response_metadata)
+```
+
+输出结果：
+```
+{'model': 'qwen2.5:7b-instruct', 'created_at': '2026-11-24T02:40:13.5567825Z', 'done': True, 'done_reason': 'stop', 'total_duration': 605680500, 'load_duration': 40592500, 'prompt_eval_count': 30, 'prompt_eval_duration': 346223000, 'eval_count': 10, 'eval_duration': 211815000, 'logprobs': None, 'model_name': 'qwen2.5:7b-instruct', 'model_provider': 'ollama'}
+{'model': 'qwen2.5:7b', 'created_at': '2026-11-24T02:40:13.9532523Z', 'done': True, 'done_reason': 'stop', 'total_duration': 391605300, 'load_duration': 38189700, 'prompt_eval_count': 36, 'prompt_eval_duration': 31153000, 'eval_count': 16, 'eval_duration': 314124000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}
+```
