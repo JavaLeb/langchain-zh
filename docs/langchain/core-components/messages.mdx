@@ -7,36 +7,40 @@ import TabItem from '@theme/TabItem';
 
 # 消息（Messages）
 
-消息（Message）是LangChain中模型上下文的基本单元。它们表示模型的输入和输出，在与LLM交互时携带表示会话状态所需的内容和元数据。
+消息（Message）是LangChain中模型上下文的基本单元。它们表示模型的输入和输出，在与LLM交互时携带表示对话状态所需的内容和元数据。
 
 消息是包含以下内容的对象：
 - Role（角色）：标识消息类型（例如system、user）。
 - Content（内容）：表示消息的实际内容（如文本、图像、音频、文档等）。
-- Metadata（元数据）：可选字段，如响应信息、消息id和令牌使用情况。
+- Metadata（元数据）：可选字段，如响应信息、消息id和token使用情况。
 
 LangChain提供了一种标准的消息类型，可以跨所有模型提供商工作，从而确保无论调用哪个模型，行为都是一致的。
 
 
 
+## 消息类型
+
+在LangChain中有四种消息类型：
+- System message（系统消息）——告诉模型如何行为并为交互提供上下文。
+- Human message（人工消息）——表示用户输入和与模型的交互。
+- AI message（AI消息）——由模型生成的响应，包括文本内容、工具调用和元数据。
+- Tool message（工具消息）——表示工具调用的输出。
+
+
 ## 基本使用
 
-有三种格式使用消息：文本格式、Message对象格式和字典格式。
+有三种使用消息的方式：
+- 文本提示（Text prompts）。
+- Message对象提示（Message prompts）。
+- 字典格式（Dictionary format）。
 
-### 文本格式
-
-文本提示是字符串，理想的直接生成任务，你不需要保留对话历史。
-
+代码如下：
 ```python
-response = model.invoke("Write a haiku about spring")
-```
-在以下情况下使用文本提示：
-- 有一个独立的请求。
-- 不需要对话记录。
-- 需要最小的代码复杂性。
+from models import qwen2dot5_7b_model as model
 
-### Message对象格式
-或者，可以通过提供消息对象列表将消息列表传递给模型。
-```python
+response = model.invoke(input="Write a haiku about spring")
+print(f'Text prompts Response: {response}')
+
 from langchain.messages import SystemMessage, HumanMessage, AIMessage
 
 messages = [
@@ -44,38 +48,44 @@ messages = [
     HumanMessage("Write a haiku about spring"),
     AIMessage("Cherry blossoms bloom...")
 ]
-response = model.invoke(messages)
-```
+response = model.invoke(input=messages)
+print(f'Message prompts Response: {response}')
 
-在以下情况下使用消息提示：
-- 管理多回合对话。
-- 处理多模态内容（图像、音频、文件）。
-- 包括系统指令（system instructions）。
-
-
-### 字典格式
-
-也可以在聊天完成格式中直接指定消息。
-
-```python
 messages = [
     {"role": "system", "content": "You are a poetry expert"},
     {"role": "user", "content": "Write a haiku about spring"},
     {"role": "assistant", "content": "Cherry blossoms bloom..."}
 ]
-response = model.invoke(messages)
+response = model.invoke(input=messages)
+print(f'Dictionary format Response: {response}')
 ```
 
-## 消息类型
+输出结果：
+```
+Text prompts Response: content="Spring blooms awake,\nWhispers of warm winds arise,\nNature's dress unfurls." additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T05:02:06.6486765Z', 'done': True, 'done_reason': 'stop', 'total_duration': 784573600, 'load_duration': 20210500, 'prompt_eval_count': 35, 'prompt_eval_duration': 338982000, 'eval_count': 18, 'eval_duration': 414323000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20bee-c026-77f7-8590-ad6e8c401387-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 35, 'output_tokens': 18, 'total_tokens': 53}
+Message prompts Response: content='  \nWhispers of warm breezes  \nSpring has softly come.' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T05:02:06.9857696Z', 'done': True, 'done_reason': 'stop', 'total_duration': 332811400, 'load_duration': 41022300, 'prompt_eval_count': 30, 'prompt_eval_duration': 20086000, 'eval_count': 14, 'eval_duration': 261868000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20bee-c33c-7714-bb64-5af87616e07b-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 30, 'output_tokens': 14, 'total_tokens': 44}
+Dictionary format Response: content='  \nSoft whispers of warm wind  \nSpring has gently come.' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T05:02:07.2884934Z', 'done': True, 'done_reason': 'stop', 'total_duration': 301153900, 'load_duration': 38665300, 'prompt_eval_count': 30, 'prompt_eval_duration': 19907000, 'eval_count': 13, 'eval_duration': 237917000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20bee-c48a-73ba-b2dd-96ef9fa427ef-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 30, 'output_tokens': 13, 'total_tokens': 43}
+```
 
-- System message（系统消息）——告诉模型如何行为并为交互提供上下文。
-- Human Message（人工消息）——表示用户输入和与模型的交互。
-- AI message（AI消息）——由模型生成的响应，包括文本内容、工具调用和元数据。
-- Tool message（工具消息）——表示工具调用的输出。
+代码说明：
+- 文本提示：文本提示是字符串，直接将字符串传给invoke(input=)。在以下情况下使用文本提示：
+  - 有一个独立的请求。
+  - 不需要对话记录。
+  - 需要最小的代码复杂性。
+- 消息对象提示：可以通过提供消息对象列表将消息列表传递给模型。在以下情况下使用消息提示：
+  - 管理多轮对话。
+  - 处理多模态内容（图像、音频、文件）。
+  - 包括系统指令。
+- 字典格式：也可以以字典格式直接指定消息，role指定角色，content指定消息内容。
 
-### System消息
+
+
+
+
+## System消息
 SystemMessage表示启动模型行为的一组初始指令。可以使用系统消息来设置基调，定义模型的角色，并为响应建立指导方针。
 
+例如：
 ```python
 system_msg = SystemMessage("You are a helpful coding assistant.")
 
@@ -85,7 +95,7 @@ messages = [
 ]
 response = model.invoke(messages)
 ```
-
+这段代码指定了模型是一个编码助手。
 
 ```python
 from langchain.messages import SystemMessage, HumanMessage
@@ -102,11 +112,12 @@ messages = [
 ]
 response = model.invoke(messages)
 ```
+这段代码指定了模型是一个在web框架方面有专业知识的高级Python开发人员。
+总是提供代码示例并解释推理。解释简洁而透彻。
 
 
-
-### Human消息
-HumanMessage表示用户输入和交互。它们可以包含文本、图像、音频、文件和任何其他数量的多模式内容。
+## Human消息
+HumanMessage表示用户输入和交互。它们可以包含文本、图像、音频、文件和任何其他数量的多模态内容。
 
 使用文本内容：
 ```python
@@ -125,14 +136,94 @@ human_msg = HumanMessage(
 ```
 
 
-### AI消息
+## AI消息
 AIMessage表示模型调用的输出。它们可以包括多模态数据、工具调用和稍后可以访问的特定于提供商的元数据。
-```python
-response = model.invoke("Explain AI")
-print(type(response))  # <class 'langchain.messages.AIMessage'>
-```
 
 AIMessage对象在调用模型时由模型返回，其中包含响应中所有相关的元数据。
+
+```python
+from models import qwen2dot5_7b_model as model
+from pprint import pprint
+
+
+def get_weather(location: str) -> str:
+    """Get the weather at a location."""
+    ...
+
+
+model_with_tools = model.bind_tools([get_weather])
+response = model_with_tools.invoke("What's the weather in Paris?")
+print(type(response))  # <class 'langchain.messages.AIMessage'>
+
+print('--------------------------------------------')
+pprint(response.model_dump())
+
+print('--------------------------------------------')
+print(f'response.usage_metadata={response.usage_metadata}')
+
+print('--------------------------------------------')
+for tool_call in response.tool_calls:
+    print(f"Tool: {tool_call['name']}")
+    print(f"Args: {tool_call['args']}")
+    print(f"ID: {tool_call['id']}")
+
+print('--------------------------------------------')
+chunks = []
+full_message = None
+for chunk in model.stream("Hi"):
+    chunks.append(chunk)
+    print(chunk.text)
+    full_message = chunk if full_message is None else full_message + chunk
+```
+
+输出结果：
+```
+<class 'langchain_core.messages.ai.AIMessage'>
+--------------------------------------------
+{'additional_kwargs': {},
+ 'content': '',
+ 'id': 'lc_run--01a20c89-39de-7287-afaa-9b7cb49c5646-0',
+ 'invalid_tool_calls': [],
+ 'name': None,
+ 'response_metadata': {'created_at': '2026-11-24T07:50:50.0842608Z',
+                       'done': True,
+                       'done_reason': 'stop',
+                       'eval_count': 20,
+                       'eval_duration': 435215000,
+                       'load_duration': 41168800,
+                       'logprobs': None,
+                       'model': 'qwen2.5:7b',
+                       'model_name': 'qwen2.5:7b',
+                       'model_provider': 'ollama',
+                       'prompt_eval_count': 152,
+                       'prompt_eval_duration': 31817000,
+                       'total_duration': 514707100},
+ 'tool_calls': [{'args': {'location': 'Paris'},
+                 'id': '0bbdd30b-2977-4490-af2b-5d3499a2465e',
+                 'name': 'get_weather',
+                 'type': 'tool_call'}],
+ 'type': 'ai',
+ 'usage_metadata': {'input_tokens': 152,
+                    'output_tokens': 20,
+                    'total_tokens': 172}}
+--------------------------------------------
+response.usage_metadata={'input_tokens': 152, 'output_tokens': 20, 'total_tokens': 172}
+--------------------------------------------
+Tool: get_weather
+Args: {'location': 'Paris'}
+ID: 0bbdd30b-2977-4490-af2b-5d3499a2465e
+--------------------------------------------
+Hello
+!
+ How
+ can
+ I
+ assist
+ you
+ today
+?
+```
+
 
 提供商以不同的方式衡量/上下文化消息类型，这意味着有时手动创建一个新的AIMessage对象并将其插入到消息历史中是有帮助的，
 就好像它来自模型一样。
@@ -153,12 +244,151 @@ messages = [
 response = model.invoke(messages)
 ```
 
-### Tool消息
 
+
+
+## Tool消息
+
+对于支持工具调用的模型，模型返回的AI消息可以包含工具调用。工具消息用于将单个工具执行的结果传递回模型。
+
+工具可以直接生成ToolMessage对象。下面，我们将展示一个简单的示例。
+
+当中间件创建工具消息而不是运行工具时，它可以用通知元数据标记该消息。
+例如，人在循环的中间件将工具消息标记为拒绝或响应决策。
+
+
+
+```python
+from langchain.messages import AIMessage
+from langchain.messages import ToolMessage,HumanMessage
+from models import qwen2dot5_7b_model as model
+
+# After a model makes a tool call
+# (Here, we demonstrate manually creating the messages for brevity)
+ai_message = AIMessage(
+    content=[],
+    tool_calls=[{
+        "name": "get_weather",
+        "args": {"location": "San Francisco"},
+        "id": "call_123"
+    }]
+)
+
+# Execute tool and create result message
+weather_result = "Sunny, 72°F"
+tool_message = ToolMessage(
+    content=weather_result,
+    tool_call_id="call_123"  # Must match the call ID
+)
+
+# Continue conversation
+messages = [
+    HumanMessage("What's the weather in San Francisco?"),
+    ai_message,  # Model's tool call
+    tool_message,  # Tool execution result
+]
+response = model.invoke(messages)  # Model processes the result
+print(response)
+```
+
+输出结果：
+```
+content='The current weather in San Francisco is sunny with a temperature of 72°F.' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-24T08:00:30.9983303Z', 'done': True, 'done_reason': 'stop', 'total_duration': 2727054500, 'load_duration': 2321698300, 'prompt_eval_count': 82, 'prompt_eval_duration': 55951000, 'eval_count': 18, 'eval_duration': 341552000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a20c92-0e6d-7044-b004-04f0344b2a94-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 82, 'output_tokens': 18, 'total_tokens': 100}
+```
+
+代码说明：
+- 代码中直接初始化AIMessage，来代替模型的回复。
+- 直接初始化ToolMessage，来代替工具执行后的返回。
+- 最后将所有历史消息发给模型，模型给出最终响应。
+
+关于完整代码例子，可以查看：
+[核心组件-> 模型->工具执行循环](./models.mdx#工具执行循环tool-execution-loop)。
 
 ## 消息内容
-可以将消息的内容视为发送到模型的数据的有效负载。消息有一个松散类型的content属性，支持字符串和无类型对象列表（例如字典）。
-这允许在LangChain聊天模型中直接支持提供商原生结构，例如多模态内容和其他数据。
+LangChain 的消息对象有一个松散的 content 字段，用来承载发给模型的内容；
+同时新增了 content_blocks 属性/参数，把不同提供商的内容格式统一成类型安全的标准块。
 
+LangChain聊天模型接受content属性中的消息内容。支持：
+- 一个字符串。
+- 提供商原生格式的内容块列表。
+- LangChain的标准内容块列表
+
+```python
+from langchain.messages import HumanMessage
+
+# String content
+human_message = HumanMessage("Hello, how are you?")
+print(human_message.content_blocks)
+
+# Provider-native format (e.g., OpenAI)
+human_message = HumanMessage(content=[
+    {"type": "text", "text": "Hello, how are you?"},
+    {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
+])
+print(human_message.content_blocks)
+
+# List of standard content blocks
+human_message = HumanMessage(content_blocks=[
+    {"type": "text", "text": "Hello, how are you?"},
+    {"type": "image", "url": "https://example.com/image.jpg"},
+])
+print(human_message.content_blocks)
+
+from langchain.messages import AIMessage
+
+message = AIMessage(
+    content=[
+        {"type": "thinking", "thinking": "...", "signature": "WaUjzkyp..."},
+        {"type": "text", "text": "..."},
+    ],
+    response_metadata={"model_provider": "anthropic"}
+)
+print(message.content_blocks)
+```
+
+输出结果：
+```
+[{'type': 'text', 'text': 'Hello, how are you?'}]
+[{'type': 'text', 'text': 'Hello, how are you?'}, {'type': 'image', 'id': 'lc_a314a026-c665-4247-b862-eb974e9c21d5', 'url': 'https://example.com/image.jpg'}]
+[{'type': 'text', 'text': 'Hello, how are you?'}, {'type': 'image', 'url': 'https://example.com/image.jpg'}]
+[{'type': 'reasoning', 'reasoning': '...', 'extras': {'signature': 'WaUjzkyp...'}}, {'type': 'text', 'text': '...'}]
+```
+
+content 和 content_blocks 的区别
+- content：原始/松散的内容载荷，可能是字符串、提供商原生结构或标准块列表。
+- content_blocks：LangChain 提供的标准化、类型安全表示，可以跨提供商统一解析。
+
+也就是说：不同提供商的原生格式不同，但 LangChain 可以通过 content_blocks 统一成一致的结构。
+
+## 序列化
+可以将消息序列化为用于存储的普通对象，并将其反序列化回消息实例。这对于保存对话历史记录和恢复对话非常有用。
+
+```python
+from langchain.messages import HumanMessage
+from langchain_core.load import dumpd, load
+
+message = HumanMessage("What is the capital of France?")
+
+# Serialize to a plain dict
+serialized = dumpd(message)
+print(f'type:{type(serialized)},serialized: {serialized}')
+
+# Deserialize back to a message object
+restored = load(serialized)
+print(f'type:{type(restored)},restored: {restored}')
+```
+
+输出结果：
+```
+type:<class 'dict'>,serialized: {'lc': 1, 'type': 'constructor', 'id': ['langchain', 'schema', 'messages', 'HumanMessage'], 'kwargs': {'content': 'What is the capital of France?', 'type': 'human'}}
+type:<class 'langchain_core.messages.human.HumanMessage'>,restored: content='What is the capital of France?' additional_kwargs={} response_metadata={}
+```
+
+代码说明：
+- dumpd将HumanMessage类型的消息序列为普通的dict字典类型。
+- load再将普通的dict字典类型反序列为HumanMessage类型。
+
+注：load()实例化Python对象，并可能在反序列化期间触发副作用。
+永远不要对来自不受信任或未经身份验证的源的数据调用load()。
 
 
