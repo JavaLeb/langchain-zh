@@ -548,6 +548,53 @@ Args: "}
 可以要求模型按照与给定 schema（模式）相匹配的格式给出响应。这样做能有效保证输出易于解析，并可直接用于后续处理。
 LangChain 支持多种 schema 类型，也支持多种强制输出为结构化输出的方法。
 
+正常输出:
+```python
+from models import qwen2dot5_7b_model as model
+
+response = model.invoke("Provide details about the movie Inception")
+print(f'type(response)={type(response)}')
+
+print(f'response={response}')
+
+from  rich.pretty import pprint
+
+pprint(response)
+```
+
+输出结果：
+```
+type(response)=<class 'langchain_core.messages.ai.AIMessage'>
+response=content='"Inception" is a 2010 science fiction film directed by and starring Christopher Nolan. The movie also features a talented ensemble cast including Leonardo DiCaprio, Joseph Gordon-Levitt, Ellen Page, Tom Hardy, and Ken Watanabe. The film explores the concept of "inception," which is the process of planting an idea in someone\'s mind during their subconscious state.\n\n### Plot Summary:\nThe story follows Dom Cobb (Leonardo DiCaprio), a skilled "extractor" who specializes in the theft of sensitive information from the subconscious of sleeping targets. However, he is also a skilled "inserter," capable of planting ideas into someone\'s subconscious. After being hired by a wealthy businessman named Saito (Ken Watanabe), Cobb and his team are tasked with a seemingly impossible mission: to plant an idea in the mind of Robert Fischer Jr. (Cillian Murphy), the heir to the multinational conglomerate Saito. The idea they are tasked with planting is that his father should split the company.\n\n### Key Elements:\n- **Dream Within a Dream:** The movie\'s plot revolves around the concept of dream layers. Cobb and his team must navigate through multiple levels of dreams, each more vivid and complex than the last.\n- **Themes of Memory and Identity:** The film explores themes of memory, identity, and the nature of reality versus dreams.\n- **Technological Imagery:** The film features impressive visual effects, including the famous "dreamscape" scenes and the rotating top, which serves as a plot device to test whether a character is in a dream state.\n\n### Production and Reception:\n- **Production:** The film was shot in various locations, including London and Malta, and required extensive use of motion capture and practical effects.\n- **Critical Acclaim:** "Inception" received widespread critical acclaim, praised for its intricate plot, visual effects, and performances. It won four Academy Awards, including Best Cinematography and Best Visual Effects, and was nominated for Best Picture.\n- **Box Office:** The film was a box office success, grossing over $821 million worldwide.\n\n### Cultural Impact:\n"Inception" has had a significant cultural impact, influencing popular culture and science fiction fandom with its exploration of dream logic and its portrayal of the subconscious mind. The film has inspired countless discussions about the nature of reality and the ethics of manipulating human consciousness.\n\n"Inception" remains a landmark in science fiction cinema, known for its complex narrative structure and its ability to challenge viewers to question the nature of their own reality.' additional_kwargs={} response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-27T06:18:35.6602781Z', 'done': True, 'done_reason': 'stop', 'total_duration': 14824986000, 'load_duration': 3637627500, 'prompt_eval_count': 36, 'prompt_eval_duration': 49555000, 'eval_count': 515, 'eval_duration': 11128718000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'} id='lc_run--01a21ba7-a31d-72c7-a93f-fffc162975b7-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 36, 'output_tokens': 515, 'total_tokens': 551}
+AIMessage(
+│   content='"Inception" is a 2010 science fiction film directed by and starring Christopher Nolan. The movie also features a talented ensemble cast including Leonardo DiCaprio, Joseph Gordon-Levitt, Ellen Page, Tom Hardy, and Ken Watanabe. The film explores the concept of "inception," which is the process of planting an idea in someone\'s mind during their subconscious state.\n\n### Plot Summary:\nThe story follows Dom Cobb (Leonardo DiCaprio), a skilled "extractor" who specializes in the theft of sensitive information from the subconscious of sleeping targets. However, he is also a skilled "inserter," capable of planting ideas into someone\'s subconscious. After being hired by a wealthy businessman named Saito (Ken Watanabe), Cobb and his team are tasked with a seemingly impossible mission: to plant an idea in the mind of Robert Fischer Jr. (Cillian Murphy), the heir to the multinational conglomerate Saito. The idea they are tasked with planting is that his father should split the company.\n\n### Key Elements:\n- **Dream Within a Dream:** The movie\'s plot revolves around the concept of dream layers. Cobb and his team must navigate through multiple levels of dreams, each more vivid and complex than the last.\n- **Themes of Memory and Identity:** The film explores themes of memory, identity, and the nature of reality versus dreams.\n- **Technological Imagery:** The film features impressive visual effects, including the famous "dreamscape" scenes and the rotating top, which serves as a plot device to test whether a character is in a dream state.\n\n### Production and Reception:\n- **Production:** The film was shot in various locations, including London and Malta, and required extensive use of motion capture and practical effects.\n- **Critical Acclaim:** "Inception" received widespread critical acclaim, praised for its intricate plot, visual effects, and performances. It won four Academy Awards, including Best Cinematography and Best Visual Effects, and was nominated for Best Picture.\n- **Box Office:** The film was a box office success, grossing over $821 million worldwide.\n\n### Cultural Impact:\n"Inception" has had a significant cultural impact, influencing popular culture and science fiction fandom with its exploration of dream logic and its portrayal of the subconscious mind. The film has inspired countless discussions about the nature of reality and the ethics of manipulating human consciousness.\n\n"Inception" remains a landmark in science fiction cinema, known for its complex narrative structure and its ability to challenge viewers to question the nature of their own reality.',
+│   additional_kwargs={},
+│   response_metadata={
+│   │   'model': 'qwen2.5:7b',
+│   │   'created_at': '2026-11-27T06:18:35.6602781Z',
+│   │   'done': True,
+│   │   'done_reason': 'stop',
+│   │   'total_duration': 14824986000,
+│   │   'load_duration': 3637627500,
+│   │   'prompt_eval_count': 36,
+│   │   'prompt_eval_duration': 49555000,
+│   │   'eval_count': 515,
+│   │   'eval_duration': 11128718000,
+│   │   'logprobs': None,
+│   │   'model_name': 'qwen2.5:7b',
+│   │   'model_provider': 'ollama'
+│   },
+│   id='lc_run--01a21ba7-a31d-72c7-a93f-fffc162975b7-0',
+│   tool_calls=[],
+│   invalid_tool_calls=[],
+│   usage_metadata={
+│   │   'input_tokens': 36,
+│   │   'output_tokens': 515,
+│   │   'total_tokens': 551
+│   }
+)
+```
+
 如下代码使用三种方式定义输出结构，分别是JSON Schema、TypedDict、Pydantic 模型。
 
 ```python

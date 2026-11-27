@@ -155,6 +155,10 @@ const config: Config = {
       darkTheme: prismThemes.dracula,
       additionalLanguages: ['python'],
     },
+        tableOfContents: {
+      minHeadingLevel: 2, // 从 h2 开始显示
+      maxHeadingLevel: 6, // 一直显示到 h4，共3个级别
+    },
   } satisfies Preset.ThemeConfig,
 };
 

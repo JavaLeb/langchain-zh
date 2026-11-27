@@ -1,0 +1,1880 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# 结构化输出（Structured output）
+
+结构化输出允许Agent以特定的、可预测的格式返回数据。与解析自然语言响应不同，可以获得应用程序可以直接使用的JSON对象、
+Pydantic模型或数据类（dataclass）的结构化数据。
+
+
+## Agent结构化输出
+
+先来看一下Agent正常的输出结构是怎样的。
+
+代码如下：
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from langchain.agents import create_agent
+
+agent = create_agent(model=qwen2dot5_7b_identifier,
+                     system_prompt="You are a helpful assistant")
+
+response = agent.invoke(input={"message": [{"role": "user", "content": "Hello"}]})
+
+print(f'type(response)={type(response)}')
+print(f'response={response}')
+
+from rich.pretty import pprint
+pprint(response, expand_all=True)
+```
+
+输出结果如下：
+```json
+type(response)=<class 'dict'>
+response={'messages': [AIMessage(content="Sure, I'd be happy to help! Could you please provide more details about what you need assistance with? Are you looking for information on a specific topic, need help with a particular task, or have a question about a certain subject? The more details you can give me, the better I can assist you.", additional_kwargs={}, response_metadata={'model': 'qwen2.5:7b', 'created_at': '2026-11-27T00:38:28.4736682Z', 'done': True, 'done_reason': 'stop', 'total_duration': 1676412400, 'load_duration': 36968600, 'prompt_eval_count': 13, 'prompt_eval_duration': 315759000, 'eval_count': 64, 'eval_duration': 1311731000, 'logprobs': None, 'model_name': 'qwen2.5:7b', 'model_provider': 'ollama'}, id='lc_run--01a21a70-72eb-7032-826e-ae63b68f7dce-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 13, 'output_tokens': 64, 'total_tokens': 77})]}
+{
+│   'messages': [
+│   │   AIMessage(
+│   │   │   content="Sure, I'd be happy to help! Could you please provide more details about what you need assistance with? Are you looking for information on a specific topic, need help with a particular task, or have a question about a certain subject? The more details you can give me, the better I can assist you.",
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T00:38:28.4736682Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1676412400,
+│   │   │   │   'load_duration': 36968600,
+│   │   │   │   'prompt_eval_count': 13,
+│   │   │   │   'prompt_eval_duration': 315759000,
+│   │   │   │   'eval_count': 64,
+│   │   │   │   'eval_duration': 1311731000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21a70-72eb-7032-826e-ae63b68f7dce-0',
+│   │   │   tool_calls=[],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 13,
+│   │   │   │   'output_tokens': 64,
+│   │   │   │   'total_tokens': 77
+│   │   │   }
+│   │   )
+│   ]
+}
+```
+
+代码说明：
+- Agent的回复response是一个dict类型，里面只有一个key为message，message是一个消息列表，这里只有一个AIMessage。
+- 代码中为了可以清晰查看response的结构，使用了pprint美化打印。
+
+
+Agent的结构化输出，通过create_agent函数的response_format签名。源码片段如下：
+
+```python
+def create_agent(
+    model: str | BaseChatModel,
+    tools: Sequence[BaseTool | Callable[..., Any] | dict[str, Any]] | None = None,
+    *,
+    system_prompt: str | SystemMessage | None = None,
+    middleware: Sequence[AgentMiddleware[StateT_co, ContextT]] = (),
+    response_format: ResponseFormat[ResponseT] | type[ResponseT] | dict[str, Any] | None = None,
+    state_schema: type[AgentState[ResponseT]] | None = None,
+    context_schema: type[ContextT] | None = None,
+    checkpointer: Checkpointer | None = None,
+    store: BaseStore | None = None,
+    interrupt_before: list[str] | None = None,
+    interrupt_after: list[str] | None = None,
+    debug: bool = False,
+    name: str | None = None,
+    cache: BaseCache[Any] | None = None,
+    transformers: Sequence[TransformerFactory] | None = None,
+) -> CompiledStateGraph[
+    AgentState[ResponseT], ContextT, InputAgentState, OutputAgentState[ResponseT]
+]
+
+
+ResponseFormat = ToolStrategy[SchemaT] | ProviderStrategy[SchemaT] | AutoStrategy[SchemaT]
+"""Union type for all supported response format strategies."""
+```
+
+response_format可以是：
+- None：不使用结构化输出，默认值。
+- dict[str, Any]：一个字典实例，通常是 Schema 字典，`{"type": "object", ...}`。key是字符串类型，
+value可以是任意类型。
+- type[ResponseT]：ResponseT是一个类型变量，属于类型的占位符，类似Java中的泛型T。由用户输入决定，例如用户
+传入response_format=User，则ResponseT就是User，而type[User]表类对象`<class 'User'>`。
+- ResponseFormat[ResponseT]：ResponseFormat是一个联合类型，有三种策略类型：
+  - ToolStrategy[SchemaT]：基于“工具调用”的策略。将你提供的 Schema 转换成一个“函数工具”。它通过引导模型调用这个工具（并将结构化数据作为参数传入）来获取结果，
+  然后由 Agent 从工具调用中提取并验证数据。
+  - ProviderStrategy[SchemaT]：基于“模型原生能力”的策略。ProviderStrategy 直接利用模型提供商
+  （如 OpenAI、Anthropic）API 层面原生的结构化输出功能。模型会直接生成符合指定 JSON Schema 的响应，无需经过工具调用的中间步骤。
+  - AutoStrategy[SchemaT]：自动选择的“智能”策略。本身不执行具体逻辑，而是一个占位符或包装器。它的作用是让 LangChain 在创建 Agent 时，
+  根据当前模型的能力自动选择使用 ProviderStrategy 还是 ToolStrategy。
+
+
+### 提供商策略（Provider strategy）
+
+ProviderStrategy源码片段
+```python
+@dataclass(init=False)
+class ProviderStrategy(Generic[SchemaT]):
+    """Use the model provider's native structured output method."""
+
+    schema: type[SchemaT] | dict[str, Any]
+    """Schema for native mode."""
+
+    schema_spec: _SchemaSpec[SchemaT]
+    """Schema spec for native mode."""
+```
+
+ProviderStrategy中定义结构化输出格式的schema。支持:
+- Pydantic模型：带字段验证的BaseModel子类。返回经过验证的Pydantic实例。
+- 数据类（Dataclasses）：带有类型注解的Python数据类。返回dict类型。
+- TypedDict：类型化字典类。返回dict类型。
+- JSON模式（JSON Schema）：具有JSON模式规范的字典。必须包括顶级标题title和描述description键。返回dict类型。
+
+TypedDict和JSON Schema的区别：
+
+定义一个 User，包含 name: str、age: int、可选 email。
+
+TypedDict写法：
+```python
+from typing import TypedDict, NotRequired
+
+class User(TypedDict):
+    name: str
+    age: int
+    email: NotRequired[str]
+```
+
+等价的 JSON Schema 写法：
+```python
+{
+    "title": "User",
+    "description": "A user profile",
+    "type": "object",
+    "properties": {
+        "name":  {"type": "string"},
+        "age":   {"type": "integer"},
+        "email": {"type": "string"}
+    },
+    "required": ["name", "age"]
+}
+```
+
+下面分别实现这四种输出模式：
+<Tabs>
+  <TabItem value="Pydantic Model" label="Pydantic Model" default>
+```python
+from pydantic import BaseModel, Field
+from langchain.agents import create_agent
+from model_identifiers import qwen2dot5_7b_instruct_identifier
+
+
+class ContactInfo(BaseModel):
+    """Contact information for a person."""
+    name: str = Field(description="The name of the person")
+    email: str = Field(description="The email address of the person")
+    phone: str = Field(description="The phone number of the person")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_instruct_identifier,
+    response_format=ContactInfo  # Auto-selects ProviderStrategy
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Extract contact info from: John Doe, john@example.com, (555) 123-4567"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# ContactInfo(name='John Doe', email='john@example.com', phone='(555) 123-4567')
+
+```
+
+输出结果：
+```json
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content='Extract contact info from: John Doe, john@example.com, (555) 123-4567',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='20c459ba-6f44-49c1-a765-7b2e7cbb855b'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b-instruct',
+│   │   │   │   'created_at': '2026-11-27T02:34:41.6118292Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1298360800,
+│   │   │   │   'load_duration': 22728600,
+│   │   │   │   'prompt_eval_count': 210,
+│   │   │   │   'prompt_eval_duration': 297363000,
+│   │   │   │   'eval_count': 47,
+│   │   │   │   'eval_duration': 967309000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b-instruct',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21ada-db37-767f-80d3-61d215747b88-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ContactInfo',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'name': 'John Doe',
+│   │   │   │   │   │   'email': 'john@example.com',
+│   │   │   │   │   │   'phone': '(555) 123-4567'
+│   │   │   │   │   },
+│   │   │   │   │   'id': 'f0ef1966-1abe-4cd6-8b91-355543afa65a',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 210,
+│   │   │   │   'output_tokens': 47,
+│   │   │   │   'total_tokens': 257
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: name='John Doe' email='john@example.com' phone='(555) 123-4567'",
+│   │   │   name='ContactInfo',
+│   │   │   id='e6766e07-81b3-4639-b80f-704744193119',
+│   │   │   tool_call_id='f0ef1966-1abe-4cd6-8b91-355543afa65a'
+│   │   )
+│   ],
+│   'structured_response': ContactInfo(
+│   │   name='John Doe',
+│   │   email='john@example.com',
+│   │   phone='(555) 123-4567'
+│   )
+}
+structured_response=name='John Doe' email='john@example.com' phone='(555) 123-4567'
+```
+  </TabItem>
+    <TabItem value="Dataclass" label="Dataclass">
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from dataclasses import dataclass
+from langchain.agents import create_agent
+
+
+@dataclass
+class ContactInfo:
+    """Contact information for a person."""
+    name: str  # The name of the person
+    email: str  # The email address of the person
+    phone: str  # The phone number of the person
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ContactInfo  # Auto-selects ProviderStrategy
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Extract contact info from: John Doe, john@example.com, (555) 123-4567"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# ContactInfo(name='John Doe', email='john@example.com', phone='(555) 123-4567')
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content='Extract contact info from: John Doe, john@example.com, (555) 123-4567',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='c4be01c2-1e75-4ac9-9615-689155d7a44e'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T02:42:02.8262237Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 3376659600,
+│   │   │   │   'load_duration': 2281012400,
+│   │   │   │   'prompt_eval_count': 184,
+│   │   │   │   'prompt_eval_duration': 96573000,
+│   │   │   │   'eval_count': 47,
+│   │   │   │   'eval_duration': 982478000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21ae1-8e97-725c-b23e-4280d82acaee-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ContactInfo',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'email': 'john@example.com',
+│   │   │   │   │   │   'phone': '(555) 123-4567',
+│   │   │   │   │   │   'name': 'John Doe'
+│   │   │   │   │   },
+│   │   │   │   │   'id': '75bb816e-0d02-4d3a-ac2e-503c8bc49ddb',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 184,
+│   │   │   │   'output_tokens': 47,
+│   │   │   │   'total_tokens': 231
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: ContactInfo(name='John Doe', email='john@example.com', phone='(555) 123-4567')",
+│   │   │   name='ContactInfo',
+│   │   │   id='2c349360-7ab6-4ad3-9661-14535d32d293',
+│   │   │   tool_call_id='75bb816e-0d02-4d3a-ac2e-503c8bc49ddb'
+│   │   )
+│   ],
+│   'structured_response': ContactInfo(
+│   │   name='John Doe',
+│   │   email='john@example.com',
+│   │   phone='(555) 123-4567'
+│   )
+}
+structured_response=ContactInfo(name='John Doe', email='john@example.com', phone='(555) 123-4567')
+```
+  </TabItem>
+    <TabItem value="TypedDict" label="TypedDict">
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from typing_extensions import TypedDict
+from langchain.agents import create_agent
+
+
+class ContactInfo(TypedDict):
+    """Contact information for a person."""
+    name: str  # The name of the person
+    email: str  # The email address of the person
+    phone: str  # The phone number of the person
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ContactInfo  # Auto-selects ProviderStrategy
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Extract contact info from: John Doe, john@example.com, (555) 123-4567"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# ContactInfo(name='John Doe', email='john@example.com', phone='(555) 123-4567')
+
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content='Extract contact info from: John Doe, john@example.com, (555) 123-4567',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='8b64754a-e0e2-42d1-b82e-1367fb817bc3'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T02:44:16.0642558Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1395373900,
+│   │   │   │   'load_duration': 33567800,
+│   │   │   │   'prompt_eval_count': 184,
+│   │   │   │   'prompt_eval_duration': 292910000,
+│   │   │   │   'eval_count': 47,
+│   │   │   │   'eval_duration': 1060915000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21ae3-9ecb-7403-9ef8-19172adb46c8-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ContactInfo',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'name': 'John Doe',
+│   │   │   │   │   │   'email': 'john@example.com',
+│   │   │   │   │   │   'phone': '(555) 123-4567'
+│   │   │   │   │   },
+│   │   │   │   │   'id': 'a720f160-1a69-4ba9-90cc-ce4c8ae2b765',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 184,
+│   │   │   │   'output_tokens': 47,
+│   │   │   │   'total_tokens': 231
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: {'name': 'John Doe', 'email': 'john@example.com', 'phone': '(555) 123-4567'}",
+│   │   │   name='ContactInfo',
+│   │   │   id='5d85ffea-d341-4689-bc92-74e92b2c9d84',
+│   │   │   tool_call_id='a720f160-1a69-4ba9-90cc-ce4c8ae2b765'
+│   │   )
+│   ],
+│   'structured_response': {
+│   │   'name': 'John Doe',
+│   │   'email': 'john@example.com',
+│   │   'phone': '(555) 123-4567'
+│   }
+}
+structured_response={'name': 'John Doe', 'email': 'john@example.com', 'phone': '(555) 123-4567'}
+```
+  </TabItem>
+    <TabItem value="JSON Schema" label="JSON Schema">
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ProviderStrategy
+
+contact_info_schema = {
+    "title": "ContactInfo",
+    "type": "object",
+    "description": "Contact information for a person.",
+    "properties": {
+        "name": {"type": "string", "description": "The name of the person"},
+        "email": {"type": "string", "description": "The email address of the person"},
+        "phone": {"type": "string", "description": "The phone number of the person"}
+    },
+    "required": ["name", "email", "phone"]
+}
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ProviderStrategy(contact_info_schema)
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Extract contact info from: John Doe, john@example.com, (555) 123-4567"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# {'name': 'John Doe', 'email': 'john@example.com', 'phone': '(555) 123-4567'}
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content='Extract contact info from: John Doe, john@example.com, (555) 123-4567',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='e894e53a-8462-43c7-a8f6-af20c9879e29'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='{\n  "name": "John Doe",\n  "email": "john@example.com",\n  "phone": "(555) 123-4567"\n}',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T02:46:02.7811751Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1233813700,
+│   │   │   │   'load_duration': 21673100,
+│   │   │   │   'prompt_eval_count': 55,
+│   │   │   │   'prompt_eval_duration': 372770000,
+│   │   │   │   'eval_count': 39,
+│   │   │   │   'eval_duration': 816590000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21ae5-4049-7457-aa6f-1d8bb3a12ae0-0',
+│   │   │   tool_calls=[],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 55,
+│   │   │   │   'output_tokens': 39,
+│   │   │   │   'total_tokens': 94
+│   │   │   }
+│   │   )
+│   ],
+│   'structured_response': {
+│   │   'name': 'John Doe',
+│   │   'email': 'john@example.com',
+│   │   'phone': '(555) 123-4567'
+│   }
+}
+structured_response={'name': 'John Doe', 'email': 'john@example.com', 'phone': '(555) 123-4567'}
+```
+  </TabItem>
+</Tabs>
+
+代码说明：
+- 通过response的structured_response来访问agent响应中的结构化输出。
+- Pydantic、Dataclass和TypedDict返回的是ContactInfo(name='John Doe', email='john@example.com', phone='(555) 123-4567')，
+而JSON Schema返回的是JSON。
+- 原生提供商的结构化输出提供了高可靠性和严格的验证，因为模型提供商强制执行模式。
+- 这里由于qwen2.5模型原生不支持结构化输出，自动调用了工具策略，从输出结果的tool_calls中就能看出来
+```
+tool_calls=[
+│   {
+│   │   'name': 'ContactInfo',
+│   │   'args': {
+│   │   │   'name': 'John Doe',
+│   │   │   'email': 'john@example.com',
+│   │   │   'phone': '(555) 123-4567'
+│   │   },
+│   │   'id': 'f0ef1966-1abe-4cd6-8b91-355543afa65a',
+│   │   'type': 'tool_call'
+│   }
+]
+```
+
+### 工具策略（Tool strategy）
+对于不支持原生结构化输出的模型，LangChain使用工具调用来实现相同的结果。这适用于所有支持工具调用的模型（大多数现代模型）。
+
+源码片段：
+```python
+@dataclass(init=False)
+class ToolStrategy(Generic[SchemaT]):
+    """Use a tool calling strategy for model responses."""
+
+    schema: type[SchemaT] | UnionType | dict[str, Any]
+    """Schema for the tool calls."""
+
+    schema_specs: list[_SchemaSpec[Any]]
+    """Schema specs for the tool calls."""
+
+    tool_message_content: str | None
+    """The content of the tool message to be returned when the model calls
+    an artificial structured output tool.
+    """
+
+    handle_errors: (
+        bool | str | type[Exception] | tuple[type[Exception], ...] | Callable[[Exception], str]
+    )
+```
+
+#### 模式schema
+ToolStrategy中定义结构化输出格式的schema。支持:Pydantic models、Dataclasses、TypedDict和JSON Schema，还支持
+- Union types：多个模式选项。模型将根据上下文选择最合适的模式。例如：Union[ProductReview, CustomerComplaint]。
+
+tool_message_content表示生成结构化输出时返回的工具消息的自定义内容。如果未提供，则默认为显示结构化响应数据的消息。
+
+下面分别实现这五种输出模式：
+<Tabs>
+  <TabItem value="Pydantic Model" label="Pydantic Model" default>
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from pydantic import BaseModel, Field
+from typing import Literal
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+
+
+class ProductReview(BaseModel):
+    """Analysis of a product review."""
+    rating: int | None = Field(description="The rating of the product", ge=1, le=5)
+    sentiment: Literal["positive", "negative"] = Field(description="The sentiment of the review")
+    key_points: list[str] = Field(description="The key points of the review. Lowercase, 1-3 words each.")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(ProductReview)
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# ProductReview(rating=5, sentiment='positive', key_points=['fast shipping', 'expensive'])
+
+```
+
+输出结果：
+```json
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content="Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'",
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='3325631c-49af-4126-ba3b-096758c64097'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:04:55.2712353Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 3299636700,
+│   │   │   │   'load_duration': 2339947500,
+│   │   │   │   'prompt_eval_count': 229,
+│   │   │   │   'prompt_eval_duration': 150874000,
+│   │   │   │   'eval_count': 40,
+│   │   │   │   'eval_duration': 803527000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21af6-8002-75b3-af70-333b992ff6fe-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'rating': 5,
+│   │   │   │   │   │   'sentiment': 'positive',
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'fast shipping',
+│   │   │   │   │   │   │   'expensive'
+│   │   │   │   │   │   ]
+│   │   │   │   │   },
+│   │   │   │   │   'id': 'a3802768-2a60-4eb0-b10b-e30fbf5bae76',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 229,
+│   │   │   │   'output_tokens': 40,
+│   │   │   │   'total_tokens': 269
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: rating=5 sentiment='positive' key_points=['fast shipping', 'expensive']",
+│   │   │   name='ProductReview',
+│   │   │   id='a2230508-044e-470e-a9e2-ebfe3047c1bd',
+│   │   │   tool_call_id='a3802768-2a60-4eb0-b10b-e30fbf5bae76'
+│   │   )
+│   ],
+│   'structured_response': ProductReview(
+│   │   rating=5,
+│   │   sentiment='positive',
+│   │   key_points=[
+│   │   │   'fast shipping',
+│   │   │   'expensive'
+│   │   ]
+│   )
+}
+structured_response=rating=5 sentiment='positive' key_points=['fast shipping', 'expensive']
+```
+  </TabItem>
+    <TabItem value="Dataclass" label="Dataclass">
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from dataclasses import dataclass
+from typing import Literal
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+
+
+@dataclass
+class ProductReview:
+    """Analysis of a product review."""
+    rating: int | None  # The rating of the product (1-5)
+    sentiment: Literal["positive", "negative"]  # The sentiment of the review
+    key_points: list[str]  # The key points of the review
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(ProductReview)
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# ProductReview(rating=5, sentiment='positive', key_points=['fast shipping', 'expensive'])
+
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content="Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'",
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='61cf1fa1-ff6a-4738-a73c-4ff75ab9ac32'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:08:25.6118243Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1187575700,
+│   │   │   │   'load_duration': 22178400,
+│   │   │   │   'prompt_eval_count': 196,
+│   │   │   │   'prompt_eval_duration': 256226000,
+│   │   │   │   'eval_count': 43,
+│   │   │   │   'eval_duration': 890915000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21af9-bde6-7779-bef9-f7bc3b82ccd9-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'rating': {
+│   │   │   │   │   │   │   'stars': 5
+│   │   │   │   │   │   },
+│   │   │   │   │   │   'sentiment': 'positive',
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'Great product',
+│   │   │   │   │   │   │   'Fast shipping'
+│   │   │   │   │   │   ]
+│   │   │   │   │   },
+│   │   │   │   │   'id': 'ac08b54e-22e4-4a87-9986-b1bd450664c5',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 196,
+│   │   │   │   'output_tokens': 43,
+│   │   │   │   'total_tokens': 239
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Error: Failed to parse structured output for tool 'ProductReview': Failed to parse data to ProductReview: 1 validation error for ProductReview\nrating\n  Input should be a valid integer [type=int_type, input_value={'stars': 5}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/int_type.\n Please fix your mistakes.",
+│   │   │   name='ProductReview',
+│   │   │   id='942a80af-db4b-4f09-9c5e-32665e5b2b95',
+│   │   │   tool_call_id='ac08b54e-22e4-4a87-9986-b1bd450664c5'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='It seems there was an issue with the way the rating was input. Let\'s correct that and analyze the review again.\n\nHere\'s the corrected review analysis:\n\n- **Review:** "Great product: 5 out of 5 stars. Fast shipping, but expensive"\n- **Rating:** 5 stars\n- **Sentiment:** Positive\n- **Key Points:** Great product, Fast shipping\n\nLet\'s proceed with the correct input format.\n',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:08:28.4123349Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 2795467300,
+│   │   │   │   'load_duration': 43128600,
+│   │   │   │   'prompt_eval_count': 329,
+│   │   │   │   'prompt_eval_duration': 58859000,
+│   │   │   │   'eval_count': 128,
+│   │   │   │   'eval_duration': 2679430000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21af9-c290-7150-87c3-56819c459a97-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'rating': 5,
+│   │   │   │   │   │   'sentiment': 'positive',
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'Great product',
+│   │   │   │   │   │   │   'Fast shipping'
+│   │   │   │   │   │   ]
+│   │   │   │   │   },
+│   │   │   │   │   'id': '7d3762d9-565d-40f7-a942-d0510e2d46cb',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 329,
+│   │   │   │   'output_tokens': 128,
+│   │   │   │   'total_tokens': 457
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: ProductReview(rating=5, sentiment='positive', key_points=['Great product', 'Fast shipping'])",
+│   │   │   name='ProductReview',
+│   │   │   id='f06b80ce-fef6-44df-b65c-4a9c2ceaf38c',
+│   │   │   tool_call_id='7d3762d9-565d-40f7-a942-d0510e2d46cb'
+│   │   )
+│   ],
+│   'structured_response': ProductReview(
+│   │   rating=5,
+│   │   sentiment='positive',
+│   │   key_points=[
+│   │   │   'Great product',
+│   │   │   'Fast shipping'
+│   │   ]
+│   )
+}
+structured_response=ProductReview(rating=5, sentiment='positive', key_points=['Great product', 'Fast shipping'])
+```
+  </TabItem>
+    <TabItem value="TypedDict" label="TypedDict">
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from typing import Literal
+from typing_extensions import TypedDict
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+
+
+class ProductReview(TypedDict):
+    """Analysis of a product review."""
+    rating: int | None  # The rating of the product (1-5)
+    sentiment: Literal["positive", "negative"]  # The sentiment of the review
+    key_points: list[str]  # The key points of the review
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(ProductReview)
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# {'rating': 5, 'sentiment': 'positive', 'key_points': ['Fast shipping']}
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content="Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'",
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='21864f1d-d768-4d1d-a333-104d8253fbf6'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:11:37.3183576Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1349538400,
+│   │   │   │   'load_duration': 24942400,
+│   │   │   │   'prompt_eval_count': 196,
+│   │   │   │   'prompt_eval_duration': 438977000,
+│   │   │   │   'eval_count': 39,
+│   │   │   │   'eval_duration': 813019000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21afc-aa1e-7490-ad96-3688c76dc244-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'rating': {
+│   │   │   │   │   │   │   'stars': 5
+│   │   │   │   │   │   },
+│   │   │   │   │   │   'sentiment': 'positive',
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'Fast shipping'
+│   │   │   │   │   │   ]
+│   │   │   │   │   },
+│   │   │   │   │   'id': '6ede2e3b-81a9-4a15-b0fa-5a79f3df62f4',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 196,
+│   │   │   │   'output_tokens': 39,
+│   │   │   │   'total_tokens': 235
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Error: Failed to parse structured output for tool 'ProductReview': Failed to parse data to ProductReview: 1 validation error for ProductReview\nrating\n  Input should be a valid integer [type=int_type, input_value={'stars': 5}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/int_type.\n Please fix your mistakes.",
+│   │   │   name='ProductReview',
+│   │   │   id='a6511619-1fa0-4ad1-aaa2-5f1f62c43f84',
+│   │   │   tool_call_id='6ede2e3b-81a9-4a15-b0fa-5a79f3df62f4'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='It appears there was a misunderstanding in the structure of the review analysis request. Let\'s correct that and analyze the review again. The review states, "Great product: 5 out of 5 stars. Fast shipping, but expensive."\n\nHere’s the corrected analysis:\n\n- Rating: 5 out of 5 stars\n- Sentiment: Positive\n- Key points: Fast shipping\n\nLet\'s proceed with the correct analysis.\n',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:11:39.9326411Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 2611225200,
+│   │   │   │   'load_duration': 48612300,
+│   │   │   │   'prompt_eval_count': 326,
+│   │   │   │   'prompt_eval_duration': 55889000,
+│   │   │   │   'eval_count': 120,
+│   │   │   │   'eval_duration': 2498109000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21afc-af68-76b4-89ba-b18e5c24afb6-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'Fast shipping'
+│   │   │   │   │   │   ],
+│   │   │   │   │   │   'rating': 5,
+│   │   │   │   │   │   'sentiment': 'positive'
+│   │   │   │   │   },
+│   │   │   │   │   'id': '7161930c-894a-4384-acc8-ae2119f7c170',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 326,
+│   │   │   │   'output_tokens': 120,
+│   │   │   │   'total_tokens': 446
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: {'rating': 5, 'sentiment': 'positive', 'key_points': ['Fast shipping']}",
+│   │   │   name='ProductReview',
+│   │   │   id='37311e13-3b4a-42ff-8236-582f0906b292',
+│   │   │   tool_call_id='7161930c-894a-4384-acc8-ae2119f7c170'
+│   │   )
+│   ],
+│   'structured_response': {
+│   │   'rating': 5,
+│   │   'sentiment': 'positive',
+│   │   'key_points': [
+│   │   │   'Fast shipping'
+│   │   ]
+│   }
+}
+structured_response={'rating': 5, 'sentiment': 'positive', 'key_points': ['Fast shipping']}
+```
+  </TabItem>
+    <TabItem value="JSON Schema" label="JSON Schema">
+```python
+from model_identifiers import qwen2dot5_7b_identifier
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+
+product_review_schema = {
+    "title": "ProductReview",
+    "type": "object",
+    "description": "Analysis of a product review.",
+    "properties": {
+        "rating": {
+            "type": ["integer", "null"],
+            "description": "The rating of the product (1-5)",
+            "minimum": 1,
+            "maximum": 5
+        },
+        "sentiment": {
+            "type": "string",
+            "enum": ["positive", "negative"],
+            "description": "The sentiment of the review"
+        },
+        "key_points": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The key points of the review"
+        }
+    },
+    "required": ["sentiment", "key_points"]
+}
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(product_review_schema)
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# {'sentiment': 'positive', 'rating': 5, 'key_points': ['Great product', 'Fast shipping', 'Expensive']}
+
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content="Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'",
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='044d80c6-e6e8-47d4-9637-3d394d627836'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:24:30.4503757Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 4743942300,
+│   │   │   │   'load_duration': 3660505300,
+│   │   │   │   'prompt_eval_count': 229,
+│   │   │   │   'prompt_eval_duration': 139765000,
+│   │   │   │   'eval_count': 44,
+│   │   │   │   'eval_duration': 935436000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21b08-68e5-75de-b563-7f0a655e1651-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'sentiment': 'positive',
+│   │   │   │   │   │   'rating': 5,
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'Great product',
+│   │   │   │   │   │   │   'Fast shipping',
+│   │   │   │   │   │   │   'Expensive'
+│   │   │   │   │   │   ]
+│   │   │   │   │   },
+│   │   │   │   │   'id': '88b806de-570b-43ba-abca-c0c6c3f8af92',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 229,
+│   │   │   │   'output_tokens': 44,
+│   │   │   │   'total_tokens': 273
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: {'sentiment': 'positive', 'rating': 5, 'key_points': ['Great product', 'Fast shipping', 'Expensive']}",
+│   │   │   name='ProductReview',
+│   │   │   id='34ca3aae-c119-415f-9ea7-b965457d73ce',
+│   │   │   tool_call_id='88b806de-570b-43ba-abca-c0c6c3f8af92'
+│   │   )
+│   ],
+│   'structured_response': {
+│   │   'sentiment': 'positive',
+│   │   'rating': 5,
+│   │   'key_points': [
+│   │   │   'Great product',
+│   │   │   'Fast shipping',
+│   │   │   'Expensive'
+│   │   ]
+│   }
+}
+structured_response={'sentiment': 'positive', 'rating': 5, 'key_points': ['Great product', 'Fast shipping', 'Expensive']}
+```
+  </TabItem>
+      <TabItem value="Union Type" label="Union Type">
+    ```python
+from model_identifiers import qwen2dot5_7b_identifier
+from pydantic import BaseModel, Field
+from typing import Literal, Union
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+
+
+class ProductReview(BaseModel):
+    """Analysis of a product review."""
+    rating: int | None = Field(description="The rating of the product", ge=1, le=5)
+    sentiment: Literal["positive", "negative"] = Field(description="The sentiment of the review")
+    key_points: list[str] = Field(description="The key points of the review. Lowercase, 1-3 words each.")
+
+
+class CustomerComplaint(BaseModel):
+    """A customer complaint about a product or service."""
+    issue_type: Literal["product", "service", "shipping", "billing"] = Field(description="The type of issue")
+    severity: Literal["low", "medium", "high"] = Field(description="The severity of the complaint")
+    description: str = Field(description="Brief description of the complaint")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(Union[ProductReview, CustomerComplaint])
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'"}]
+})
+
+from rich.pretty import pprint
+
+pprint(response, expand_all=True)
+
+print(f'structured_response={response["structured_response"]}')
+# ProductReview(rating=5, sentiment='positive', key_points=['fast shipping', 'expensive'])
+
+    ```
+
+输出结果：
+    ```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content="Analyze this review: 'Great product: 5 out of 5 stars. Fast shipping, but expensive'",
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='3617f663-a98d-4cd3-9c0a-9cf2b61c9dac'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:27:22.214291Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1077031300,
+│   │   │   │   'load_duration': 34928900,
+│   │   │   │   'prompt_eval_count': 330,
+│   │   │   │   'prompt_eval_duration': 125398000,
+│   │   │   │   'eval_count': 44,
+│   │   │   │   'eval_duration': 904201000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21b0b-162f-75d6-8b41-9257932cb9f0-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'ProductReview',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'sentiment': 'positive',
+│   │   │   │   │   │   'key_points': [
+│   │   │   │   │   │   │   'great product',
+│   │   │   │   │   │   │   'fast shipping',
+│   │   │   │   │   │   │   'expensive'
+│   │   │   │   │   │   ],
+│   │   │   │   │   │   'rating': 5
+│   │   │   │   │   },
+│   │   │   │   │   'id': '6201b8a2-ed40-412c-bbc6-8343dc354357',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 330,
+│   │   │   │   'output_tokens': 44,
+│   │   │   │   'total_tokens': 374
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: rating=5 sentiment='positive' key_points=['great product', 'fast shipping', 'expensive']",
+│   │   │   name='ProductReview',
+│   │   │   id='b2ac20ca-ce8f-4e86-a8f8-4d1a8e316cdf',
+│   │   │   tool_call_id='6201b8a2-ed40-412c-bbc6-8343dc354357'
+│   │   )
+│   ],
+│   'structured_response': ProductReview(
+│   │   rating=5,
+│   │   sentiment='positive',
+│   │   key_points=[
+│   │   │   'great product',
+│   │   │   'fast shipping',
+│   │   │   'expensive'
+│   │   ]
+│   )
+}
+structured_response=rating=5 sentiment='positive' key_points=['great product', 'fast shipping', 'expensive']
+    ```
+        </TabItem>
+</Tabs>
+
+
+#### 自定义tool_message_content
+
+tool_message_content参数允许自定义在生成结构化输出时出现在对话历史中的消息：
+
+```python
+from pydantic import BaseModel, Field
+from typing import Literal
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from model_identifiers import qwen2dot5_7b_identifier
+from rich.pretty import pprint
+
+
+class MeetingAction(BaseModel):
+    """Action items extracted from a meeting transcript."""
+    task: str = Field(description="The specific task to be completed")
+    assignee: str = Field(description="Person responsible for the task")
+    priority: Literal["low", "medium", "high"] = Field(description="Priority level")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(schema=MeetingAction)
+)
+
+response = agent.invoke({
+    "messages": [
+        {"role": "user", "content": "From our meeting: Sarah needs to update the project timeline as soon as possible"}]
+})
+
+pprint(response, expand_all=True)
+
+print('='*60)
+
+tool_message_agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(
+        schema=MeetingAction,
+        tool_message_content="Action item captured and added to meeting notes!"
+    )
+)
+
+response = tool_message_agent.invoke({
+    "messages": [
+        {"role": "user", "content": "From our meeting: Sarah needs to update the project timeline as soon as possible"}]
+})
+
+pprint(response, expand_all=True)
+
+```
+
+输出结果：
+```
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content='From our meeting: Sarah needs to update the project timeline as soon as possible',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='0ffcce11-249d-41ae-bb84-5be6930861b5'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:55:16.1401001Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 1131598700,
+│   │   │   │   'load_duration': 41904900,
+│   │   │   │   'prompt_eval_count': 208,
+│   │   │   │   'prompt_eval_duration': 282133000,
+│   │   │   │   'eval_count': 36,
+│   │   │   │   'eval_duration': 798780000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21b24-a0be-7726-8beb-9e609730baa2-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'MeetingAction',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'priority': 'high',
+│   │   │   │   │   │   'task': 'update the project timeline',
+│   │   │   │   │   │   'assignee': 'Sarah'
+│   │   │   │   │   },
+│   │   │   │   │   'id': '0744fbfa-3419-4395-9f94-41fd19346c4f',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 208,
+│   │   │   │   'output_tokens': 36,
+│   │   │   │   'total_tokens': 244
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content="Returning structured response: task='update the project timeline' assignee='Sarah' priority='high'",
+│   │   │   name='MeetingAction',
+│   │   │   id='a3341e2e-5a3a-4fc9-9052-daac792e92a9',
+│   │   │   tool_call_id='0744fbfa-3419-4395-9f94-41fd19346c4f'
+│   │   )
+│   ],
+│   'structured_response': MeetingAction(
+│   │   task='update the project timeline',
+│   │   assignee='Sarah',
+│   │   priority='high'
+│   )
+}
+============================================================
+{
+│   'messages': [
+│   │   HumanMessage(
+│   │   │   content='From our meeting: Sarah needs to update the project timeline as soon as possible',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={},
+│   │   │   id='746e9561-0853-4543-91cf-063153a13f4c'
+│   │   ),
+│   │   AIMessage(
+│   │   │   content='',
+│   │   │   additional_kwargs={},
+│   │   │   response_metadata={
+│   │   │   │   'model': 'qwen2.5:7b',
+│   │   │   │   'created_at': '2026-11-27T03:55:16.9878373Z',
+│   │   │   │   'done': True,
+│   │   │   │   'done_reason': 'stop',
+│   │   │   │   'total_duration': 822473700,
+│   │   │   │   'load_duration': 33566900,
+│   │   │   │   'prompt_eval_count': 208,
+│   │   │   │   'prompt_eval_duration': 22026000,
+│   │   │   │   'eval_count': 36,
+│   │   │   │   'eval_duration': 761408000,
+│   │   │   │   'logprobs': None,
+│   │   │   │   'model_name': 'qwen2.5:7b',
+│   │   │   │   'model_provider': 'ollama'
+│   │   │   },
+│   │   │   id='lc_run--01a21b24-a544-70ce-a1c7-a55b685d5476-0',
+│   │   │   tool_calls=[
+│   │   │   │   {
+│   │   │   │   │   'name': 'MeetingAction',
+│   │   │   │   │   'args': {
+│   │   │   │   │   │   'task': 'update the project timeline',
+│   │   │   │   │   │   'priority': 'high',
+│   │   │   │   │   │   'assignee': 'Sarah'
+│   │   │   │   │   },
+│   │   │   │   │   'id': '4e3a7081-9397-42df-a290-6c4793c37948',
+│   │   │   │   │   'type': 'tool_call'
+│   │   │   │   }
+│   │   │   ],
+│   │   │   invalid_tool_calls=[],
+│   │   │   usage_metadata={
+│   │   │   │   'input_tokens': 208,
+│   │   │   │   'output_tokens': 36,
+│   │   │   │   'total_tokens': 244
+│   │   │   }
+│   │   ),
+│   │   ToolMessage(
+│   │   │   content='Action item captured and added to meeting notes!',
+│   │   │   name='MeetingAction',
+│   │   │   id='a48cb91c-5a30-459b-b98f-0cf736db1255',
+│   │   │   tool_call_id='4e3a7081-9397-42df-a290-6c4793c37948'
+│   │   )
+│   ],
+│   'structured_response': MeetingAction(
+│   │   task='update the project timeline',
+│   │   assignee='Sarah',
+│   │   priority='high'
+│   )
+}
+```
+
+代码说明：
+- 在未定义tool_message_content时，工具输出的内容为
+content="Returning structured response: task='update the project timeline' assignee='Sarah' priority='high'"
+- 定义tool_message_content后，工具是呼出内容为
+content='Action item captured and added to meeting notes!'
+
+
+#### 错误处理（Error handling）
+
+当通过工具调用生成结构化输出时，模型可能会犯错误。LangChain提供了智能重试机制来自动处理这些错误。
+
+##### 多结构化输出错误
+
+```python
+from rich.pretty import pprint
+
+from pydantic import BaseModel, Field
+from typing import Union
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+class ContactInfo(BaseModel):
+    name: str = Field(description="Person's name")
+    email: str = Field(description="Email address")
+
+
+class EventDetails(BaseModel):
+    event_name: str = Field(description="Name of the event")
+    date: str = Field(description="Event date")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(Union[ContactInfo, EventDetails])  # Default: handle_errors=True
+
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Extract ALL information using EVERY available tool. "
+                             "You MUST call both ContactInfo and EventDetails. "
+                             "Info: John Doe (john@email.com) is organizing Tech Conference on March 15th."
+                  }]
+})
+
+# pprint(response, expand_all=True)
+
+for message in response["messages"]:
+    message.pretty_print()
+```
+
+输出结果：
+```
+================================ Human Message =================================
+
+Extract ALL information using EVERY available tool. You MUST call both ContactInfo and EventDetails. Info: John Doe (john@email.com) is organizing Tech Conference on March 15th.
+================================== Ai Message ==================================
+Tool Calls:
+  ContactInfo (79980f8e-a53a-4be8-9136-14d8d44e45dd)
+ Call ID: 79980f8e-a53a-4be8-9136-14d8d44e45dd
+  Args:
+    name: John Doe
+    email: john@email.com
+  EventDetails (da7417c5-33f7-47a2-82a1-a46551ffbc21)
+ Call ID: da7417c5-33f7-47a2-82a1-a46551ffbc21
+  Args:
+    event_name: Tech Conference
+    date: March 15th
+================================= Tool Message =================================
+Name: ContactInfo
+
+Error: Model incorrectly returned multiple structured responses (ContactInfo, EventDetails) when only one is expected.
+ Please fix your mistakes.
+================================= Tool Message =================================
+Name: EventDetails
+
+Error: Model incorrectly returned multiple structured responses (ContactInfo, EventDetails) when only one is expected.
+ Please fix your mistakes.
+================================== Ai Message ==================================
+
+I will ensure to call each function separately and provide the appropriate information. Let's start by extracting contact information and then the event details.
+
+First, I will call the `ContactInfo` function with the provided email and name.
+Tool Calls:
+  ContactInfo (7419cd4d-88b7-4174-b6c8-c28e8194ca17)
+ Call ID: 7419cd4d-88b7-4174-b6c8-c28e8194ca17
+  Args:
+    email: john@email.com
+    name: John Doe
+================================= Tool Message =================================
+Name: ContactInfo
+
+Returning structured response: name='John Doe' email='john@email.com'
+```
+
+代码说明：
+- 代码中使用qwen2.5模型，通过提示词来调用两个工具。默认handle_errors=True，模型会处理错误，模型经过复杂
+思考最终输出ContactInfo。
+- 可以设置handle_errors=False，来查看这个错误：
+```python
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(Union[ContactInfo, EventDetails],
+                                 handle_errors=False),  # Default: handle_errors=True
+
+)
+```
+
+##### 模式验证错误
+当结构化输出与预期的模式不匹配时，Agent提供特定的错误反馈：
+```python
+from pydantic import BaseModel, Field
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+class ProductRating(BaseModel):
+    rating: int | None = Field(description="Rating from 1-5", ge=1, le=5)
+    comment: str = Field(description="Review comment")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(ProductRating),  # Default: handle_errors=True
+    system_prompt="You are a helpful assistant that parses product reviews. Do not make any field or value up."
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Parse this: Amazing product, 10/10!"}]
+})
+
+for message in response["messages"]:
+    message.pretty_print()
+```
+
+输出结果：
+```
+================================ Human Message =================================
+
+Parse this: Amazing product, 10/10!
+================================== Ai Message ==================================
+Tool Calls:
+  ProductRating (45d3a0da-e2d0-443a-94e6-79ac0b5a9bde)
+ Call ID: 45d3a0da-e2d0-443a-94e6-79ac0b5a9bde
+  Args:
+    rating: 10
+    comment: Amazing product, 10/10!
+================================= Tool Message =================================
+Name: ProductRating
+
+Error: Failed to parse structured output for tool 'ProductRating': Failed to parse data to ProductRating: 1 validation error for ProductRating
+rating
+  Input should be less than or equal to 5 [type=less_than_equal, input_value=10, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.14/v/less_than_equal.
+ Please fix your mistakes.
+================================== Ai Message ==================================
+
+It seems the rating provided is too high as the maximum rating is 5. Let's adjust it to 5 while keeping the positive feedback.
+Tool Calls:
+  ProductRating (651b0769-bf86-48ae-a4d9-86deecbda363)
+ Call ID: 651b0769-bf86-48ae-a4d9-86deecbda363
+  Args:
+    rating: 5
+    comment: Amazing product, 10/10!
+================================= Tool Message =================================
+Name: ProductRating
+
+Returning structured response: rating=5 comment='Amazing product, 10/10!'
+```
+
+代码说明：
+- 模型从给定文本中解析出的rating为10，在模式验证时发生错误，
+不满足rating定义约束Field(description="Rating from 1-5", ge=1, le=5)，
+模型自行思考，最终输出rating=5。
+
+
+
+##### 错误处理策略
+
+###### 自定义错误消息
+```python
+from pydantic import BaseModel, Field
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+class ProductRating(BaseModel):
+    rating: int | None = Field(description="Rating from 1-5", ge=1, le=5)
+    comment: str = Field(description="Review comment")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(schema=ProductRating,
+                                 handle_errors="Please provide a valid rating between 1-5 and include a comment."
+                                 ),  # Default: handle_errors=True
+    system_prompt="You are a helpful assistant that parses product reviews. Do not make any field or value up."
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Parse this: Amazing product, 10/10!"}]
+})
+
+for message in response["messages"]:
+    message.pretty_print()
+```
+
+
+输出结果：
+```
+================================ Human Message =================================
+
+Parse this: Amazing product, 10/10!
+================================== Ai Message ==================================
+Tool Calls:
+  ProductRating (0ef80141-a9f6-45f3-859c-6e4c0e1d1b12)
+ Call ID: 0ef80141-a9f6-45f3-859c-6e4c0e1d1b12
+  Args:
+    comment: Amazing product, 10/10!
+    rating: 10
+================================= Tool Message =================================
+Name: ProductRating
+
+Please provide a valid rating between 1-5 and include a comment.
+================================== Ai Message ==================================
+
+The rating needs to be a number between 1 and 5. Let's try again. The review says "Amazing product, 10/10!" which translates to a perfect score. I will adjust it to the maximum allowed rating.
+Tool Calls:
+  ProductRating (d15eec21-3545-455c-b96c-9845cbfbd441)
+ Call ID: d15eec21-3545-455c-b96c-9845cbfbd441
+  Args:
+    comment: Amazing product, 10/10!
+    rating: 5
+================================= Tool Message =================================
+Name: ProductRating
+
+Returning structured response: rating=5 comment='Amazing product, 10/10!'
+```
+
+
+###### 处理多种异常类型
+- 如果handle_errors是异常类型，则Agent只会在引发的异常是指定类型时重试（使用默认错误消息）。
+在所有其他情况下，将引发异常。
+- 如果handle_errors是一个异常元组，则Agent只会在引发的异常是指定类型之一时重试（使用默认错误消息）。
+在所有其他情况下，将引发异常。
+
+```python
+# 单个异常. 在出现ValueError时，模型会重试.
+response_format=ToolStrategy(schema=ProductRating,
+                                 handle_errors=(ValueError)  # Retry on ValueError
+                                 )
+
+# 多个异常. 在出现ValueError和TypeError时，模型会重试。
+response_format=ToolStrategy(schema=ProductRating,
+                                 handle_errors=(ValueError, TypeError)  # Retry on ValueError and TypeError
+                                 )
+
+```
+
+###### 自定义错误处理函数
+
+
+```python
+from langchain.agents.structured_output import StructuredOutputValidationError
+from langchain.agents.structured_output import MultipleStructuredOutputsError
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from typing import Union
+from pydantic import BaseModel, Field
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+class ContactInfo(BaseModel):
+    name: str = Field(description="Person's name")
+    email: str = Field(description="Email address")
+
+
+class EventDetails(BaseModel):
+    event_name: str = Field(description="Name of the event")
+    date: str = Field(description="Event date")
+
+
+def custom_error_handler(error: Exception) -> str:
+    if isinstance(error, StructuredOutputValidationError):
+        return "There was an issue with the format. Try again."
+    elif isinstance(error, MultipleStructuredOutputsError):
+        return "Multiple structured outputs were returned. Pick the most relevant one."
+    else:
+        return f"Error: {str(error)}"
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    response_format=ToolStrategy(
+        schema=Union[ContactInfo, EventDetails],
+        handle_errors=custom_error_handler
+    )  # Default: handle_errors=True
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user",
+                  "content": "Extract ALL information using EVERY available tool. "
+                             "You MUST call both ContactInfo and EventDetails. "
+                             "Info: John Doe (john@email.com) is organizing Tech Conference on March 15th."}]
+})
+
+for message in response["messages"]:
+    message.pretty_print()
+```
+
+输出结果：
+```
+================================ Human Message =================================
+
+Extract ALL information using EVERY available tool. You MUST call both ContactInfo and EventDetails. Info: John Doe (john@email.com) is organizing Tech Conference on March 15th.
+================================== Ai Message ==================================
+Tool Calls:
+  ContactInfo (d9cc2dbb-2acf-4eaa-aaa8-95e21724d2b9)
+ Call ID: d9cc2dbb-2acf-4eaa-aaa8-95e21724d2b9
+  Args:
+    name: John Doe
+    email: john@email.com
+  EventDetails (c4e01bc3-1000-426f-9047-3a6ee27712fa)
+ Call ID: c4e01bc3-1000-426f-9047-3a6ee27712fa
+  Args:
+    event_name: Tech Conference
+    date: March 15th
+================================= Tool Message =================================
+Name: ContactInfo
+
+Multiple structured outputs were returned. Pick the most relevant one.
+================================= Tool Message =================================
+Name: EventDetails
+
+Multiple structured outputs were returned. Pick the most relevant one.
+================================== Ai Message ==================================
+
+Let's try extracting the information step by step using both tools.
+
+First, I'll use the `ContactInfo` tool with the provided email and name to get more details about John Doe.
+
+Then, I'll use the `EventDetails` tool with the event name and date to gather more information about the Tech Conference.
+
+Let's start with the `ContactInfo` tool.
+Tool Calls:
+  ContactInfo (2af7256b-e86a-430d-8576-14914759e1b3)
+ Call ID: 2af7256b-e86a-430d-8576-14914759e1b3
+  Args:
+    email: john@email.com
+    name: John Doe
+================================= Tool Message =================================
+Name: ContactInfo
+
+Returning structured response: name='John Doe' email='john@email.com'
+```
+
+##### 模型拒绝（Model refusal）
+当模型拒绝时，它不会返回任何结构化输出。使用ProviderStrategy，Agent会引发StructuredOutputValidationError。
+使用ToolStrategy，Agent结束时没有structured_response。
+要为任何一种策略引发ModelRefusalError，添加ModelRefusalMiddleware：
+
+```python
+from langchain.agents.structured_output import ToolStrategy
+from pydantic import BaseModel, Field
+from langchain.agents import create_agent
+from langchain.agents.middleware import ModelRefusalMiddleware
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+class ProductRating(BaseModel):
+    rating: int | None = Field(description="Rating from 1-5", ge=1, le=5)
+    comment: str = Field(description="Review comment")
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    response_format=ToolStrategy(ProductRating),
+    system_prompt="You are a helpful assistant that parses product reviews. "
+                  "Do not make any field or value up. "
+                  "Please refuse to parse.",
+
+    middleware=[ModelRefusalMiddleware()]
+)
+
+response = agent.invoke({
+    "messages": [{"role": "user", "content": "Parse this: Amazing product, 10/10!"}]
+})
+
+for message in response["messages"]:
+    message.pretty_print()
+```
+
+输出结果：
+```
+================================ Human Message =================================
+
+Parse this: Amazing product, 10/10!
+================================== Ai Message ==================================
+Tool Calls:
+  ProductRating (2e34c9e4-1e98-42c3-aaa4-31ceb03f9217)
+ Call ID: 2e34c9e4-1e98-42c3-aaa4-31ceb03f9217
+  Args:
+    comment: Amazing product, 10/10!
+    rating: 10
+================================= Tool Message =================================
+Name: ProductRating
+
+Error: Failed to parse structured output for tool 'ProductRating': Failed to parse data to ProductRating: 1 validation error for ProductRating
+rating
+  Input should be less than or equal to 5 [type=less_than_equal, input_value=10, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.14/v/less_than_equal.
+ Please fix your mistakes.
+================================== Ai Message ==================================
+
+It seems there was an error because the rating provided is outside the allowed range (1-5). The maximum allowed rating is 5. Could you please rate the product between 1 and 5? For example, you could rate it as 5/5.
+================================== Ai Message ==================================
+
+ If you still believe it deserves a 10/10, please let me know and I can help you find another way to express it.
+================================== Ai Message ==================================
+================================== Ai Message ==================================
+
+For now, I will proceed with a 5/5 rating based on the information provided.
+Tool Calls:
+  ProductRating (4cb988d9-2d5a-4461-a43a-09f47a26b51e)
+ Call ID: 4cb988d9-2d5a-4461-a43a-09f47a26b51e
+  Args:
+    comment: Amazing product, 10/10!
+    rating: 5
+================================= Tool Message =================================
+Name: ProductRating
+
+Returning structured response: rating=5 comment='Amazing product, 10/10!'
+```
+
+代码说明：
+- ModelRefusalMiddleware 要求 langchain>=1.4.9。
+- 因为选择的是模型qwen2.5，从运行结果来看，并未达到预期效果。
+
+
+
+## Model结构化输出
+
+参见 [核心组件 -> 模型 -> 结构化输出](./models.mdx#结构化输出)。
+
+## 处理链中的解析错误

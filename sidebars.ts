@@ -35,7 +35,7 @@ const sidebars: SidebarsConfig = {
         'langchain/core-components/models',
         'langchain/core-components/messages',
         'langchain/core-components/tools',
-        // 'core-components/structured-outputs',
+        'langchain/core-components/structured_output',
         ],
     },
 
