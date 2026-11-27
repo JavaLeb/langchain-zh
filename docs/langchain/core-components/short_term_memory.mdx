@@ -1,0 +1,1329 @@
+
+
+# 短期记忆（Short-term memory）
+
+记忆系统用来记住历史交互信息。对于 AI 智能体（Agent），记忆至关重要：它让智能体记住之前对话、从反馈中学习、适配用户偏好。
+当 Agent 处理复杂任务、多轮交互时，记忆能力直接影响执行效率与用户体验。
+
+短期记忆让应用在单个线程（thread）或对话内记住先前的交互。一个线程把一次会话中的多次交互组织在一起，
+类似于电子邮件把消息归入同一个会话的方式。
+
+对话历史是短期记忆最常见的形式。长对话对当今的 LLM 构成挑战：完整的历史对话可能无法塞进 LLM 的上下文窗口（context window），
+导致上下文丢失或报错。即使模型支持完整的上下文长度，大多数 LLM 在长上下文上表现依然不佳——它们会被陈旧或跑题的内容"分心"，
+同时还伴随更慢的响应时间和更高的成本。
+
+聊天模型通过 messages 接收上下文，其中包括指令（system message）和输入（human message）。在聊天应用中，
+消息在人类输入和模型回复之间交替，形成一个随时间不断变长的消息列表。由于上下文窗口有限，
+很多应用需要策略来剔除、“遗忘” 过时信息。
+
+
+## 基本使用
+
+要向Agent添加短期记忆（线程级持久性），需要在创建Agent时指定一个检查点器checkpointer。
+```python
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import InMemorySaver
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+def get_user_info() -> str:
+    """Look up information about the current user."""
+    return "No user profile on file."
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[get_user_info],
+    checkpointer=InMemorySaver(),
+)
+
+thread_config = {"configurable": {"thread_id": "1"}}
+response = agent.invoke(
+    {"messages": [{"role": "user", "content": "Hi! My name is Bob."}]},
+    thread_config,
+)
+
+print(response["messages"][-1].content)  # "Hi Bob! Nice to see you here. How are you doing?"
+
+response = agent.invoke(
+    {"messages": [{"role": "user", "content": "What's my name?"}]},
+    thread_config,
+)
+print("=="*60)
+print(response["messages"][-1].content)  # "You are Bob!"
+
+```
+
+输出结果：
+```
+Hello Bob! Nice to meet you. How can I assist you today?
+========================================================================================================================
+Your name is Bob.
+```
+
+代码说明：
+- create_agent创建Agent时，指定了checkpointer为InMemorySaver()，它是一种内存型存储，用于存储历史信息。
+- agent.invoke()传入了thread id，用于标记此次对话。当传入message，模型会记住这个message，是属于thread_id=1的，之后再次invoke()
+传入相同的thread_id，模型可以看到历史消息，从而回答用户的问题。
+- 历史消息会被存储在一个key为messages的value中。通过同一个thread_id来查看。
+
+
+使用InMemorySaver()，当程序运行结束，保存的数据会丢失。在生产环境中，可以使用一个数据库类型的检查点器，这样可以永久保存信息。
+
+这里以PostGreSQL为例，需要先安装依赖
+
+```bash
+pip install -U langgraph-checkpoint-postgres "psycopg[binary]"
+```
+
+代码如下：
+```python
+from langchain.agents import create_agent
+from langgraph.checkpoint.postgres import PostgresSaver
+from model_identifiers import llama3dot2_3b_identifier
+
+def get_user_info() -> str:
+    """Look up information about the current user."""
+    return "No user profile on file."
+
+
+DB_URI = "postgresql://postgres:root@localhost:5432/postgres?sslmode=disable"
+with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+    checkpointer.setup()  # auto create tables in PostgreSQL
+    agent = create_agent(
+        model=llama3dot2_identifier,
+        tools=[get_user_info],
+        checkpointer=checkpointer,
+    )
+    thread_config = {"configurable": {"thread_id": "1"}}
+    response = agent.invoke(
+        {"messages": [{"role": "user", "content": "Hi! My name is Bob."}]},
+        thread_config,
+    )
+
+    print(response["messages"][-1].content)  # "Hi Bob! Nice to see you here. How are you doing?"
+
+    response = agent.invoke(
+        {"messages": [{"role": "user", "content": "What's my name?"}]},
+        thread_config,
+    )
+    print("==" * 60)
+    print(response["messages"][-1].content)  # "You are Bob!"
+```
+
+输出结果：
+```
+I'm sorry to hear that. Unfortunately, I don't have any specific information about you, Bob. Can you please tell me a bit more about what brings you here today? I'll do my best to help you with any questions or issues you'd like to discuss.
+========================================================================================================================
+You asked your name, and I should have answered that I don't have any information about you, Bob. Your name is indeed Bob. How can I assist you today?
+```
+
+代码说明：
+- 考虑到个人电脑资源有限，这里使用llama3.2:3b模型。
+- 需要给定PostGreSQL数据库的连接地址，格式如下：
+`postgresql://<用户名>:<密码>@<ip地址>:<端口>/<数据库>?sslmode=disable`
+- 保存在PG上的数据如图：
+![PostGres Checkpointer](/img/short-term-memory/checkpoint-postgres.png)
+
+
+## 自定义Agent记忆
+默认情况下，Agent使用AgentState来管理短期记忆，特别是通过messages键管理会话历史。
+
+可以扩展AgentState以添加其他字段。使用state_schema参数将自定义状态模式传递给create_agent。
+
+代码如下：
+```python
+from langchain.agents import create_agent, AgentState
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.prebuilt import ToolRuntime
+
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+def get_user_info(runtime: ToolRuntime) -> str:
+    """Look up information about the current user."""
+    user_id = runtime.state.get("user_id")
+    preferences = runtime.state.get("preferences")
+    if not user_id:
+        return "No user_id found in state."
+    return f"User {user_id} preferences: {preferences}"
+
+
+class CustomAgentState(AgentState):
+    user_id: str
+    preferences: dict
+
+
+agent = create_agent(
+    qwen2dot5_7b_identifier,
+    tools=[get_user_info],
+    state_schema=CustomAgentState,
+    checkpointer=InMemorySaver(),
+)
+
+thread_config = {"configurable": {"thread_id": "1"}}
+
+# Custom state can be passed in invoke
+response = agent.invoke(
+    input={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "user_id": "user_123",
+        "preferences": {"theme": "dark"}
+    },
+    config=thread_config
+)
+print("==" * 60)
+print(response["messages"][-1].content)
+
+response = agent.invoke(
+    {"messages": [{"role": "user", "content": "调用get_user_info查询用户user_123的preferences是什么？"}]},
+    thread_config,
+)
+print("==" * 60)
+print(response["messages"][-1].content)
+```
+
+输出结果：
+```
+========================================================================================================================
+Hello! How can I assist you today?
+========================================================================================================================
+用户user_123的preferences是主题设置为dark模式。
+```
+
+- 代码中自定义CustomAgentState，在create_agent中通过state_schema=CustomAgentState来使用。
+- 第一次invoke()，通过字段user_id和preferences将数据传给模型。
+- 第二次invoke()，在输入给模型的消息中明确要调用函数get_user_info，函数通过runtime.state来查询保存的数据。
+这里不明确调用get_user_info是无法查询用户信息的，原因是数据只保存在runtime.state中，这个数据和messages不同，模型是
+无法看到的。
+
+
+
+## 常见模式
+
+启用短期记忆后，长时间的对话可能会超出LLM的上下文窗口。常见的解决方案有：
+- 修剪消息（Trim messages）。
+- 删除消息（Delete messages）。
+- 概括消息（Summarize messages）。
+
+### 修剪消息
+```python
+from langchain.messages import RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain.agents import create_agent, AgentState
+from langchain.agents.middleware import before_model
+from langgraph.runtime import Runtime
+from langchain_core.runnables import RunnableConfig
+from typing import Any
+from model_identifiers import llama3dot2_3b_identifier
+
+
+def my_print(step):
+    print('+' * 50 + 'Response ' + str(step) + '+' * 50)
+
+
+@before_model
+def trim_messages(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+    """Keep only the last few messages to fit context window."""
+    messages = state["messages"]
+
+    if len(messages) <= 3:
+        return None  # No changes needed
+
+    first_msg = messages[0]
+    recent_messages = messages[-3:] if len(messages) % 2 == 0 else messages[-4:]
+    new_messages = [first_msg] + recent_messages
+
+    return {
+        "messages": [
+            RemoveMessage(id=REMOVE_ALL_MESSAGES),
+            *new_messages
+        ]
+    }
+
+
+agent = create_agent(
+    model=llama3dot2_3b_identifier,
+    middleware=[trim_messages],
+    checkpointer=InMemorySaver(),
+)
+
+config: RunnableConfig = {"configurable": {"thread_id": "1"}}
+
+response1 = agent.invoke({"messages": "hi, my name is bob"}, config)
+my_print(step=1)
+for message in response1["messages"]:
+    message.pretty_print()
+my_print(step=1)
+
+response2 = agent.invoke({"messages": "write a short poem about cats"}, config)
+my_print(step=2)
+for message in response2["messages"]:
+    message.pretty_print()
+my_print(step=2)
+
+response3 = agent.invoke({"messages": "now do the same but for dogs"}, config)
+my_print(step=3)
+for message in response3["messages"]:
+    message.pretty_print()
+my_print(step=3)
+
+final_response = agent.invoke({"messages": "what's my name?"}, config)
+my_print(step=4)
+for message in final_response["messages"]:
+    message.pretty_print()
+my_print(step=4)
+
+```
+
+输出结果：
+
+```
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! It's nice to meet you. Is there something I can help you with, or would you like to chat for a bit?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! It's nice to meet you. Is there something I can help you with, or would you like to chat for a bit?
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Here's a short poem about cats:
+
+Whiskers twitch, eyes shine bright
+Midnight strollers, through the night
+Soft and silent, as can be
+Furry little secrets, for you and me
+
+Purrs in the morning, and purrs at night
+Their little hearts, beating with delight
+Claws that scratch, and noses fine
+Feline friends, forever divine
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! It's nice to meet you. Is there something I can help you with, or would you like to chat for a bit?
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Here's a short poem about cats:
+
+Whiskers twitch, eyes shine bright
+Midnight strollers, through the night
+Soft and silent, as can be
+Furry little secrets, for you and me
+
+Purrs in the morning, and purrs at night
+Their little hearts, beating with delight
+Claws that scratch, and noses fine
+Feline friends, forever divine
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Here's a short poem about dogs:
+
+Tails that wag, hearts that sing
+Faithful friends, with love that clings
+Ears that perk, and eyes that shine
+Loyal companions, all the time
+
+Snouts that sniff, and paws that play
+Bringing joy, every single day
+Barks of excitement, and snuggles too
+Canine love, that's forever true
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Here's a short poem about cats:
+
+Whiskers twitch, eyes shine bright
+Midnight strollers, through the night
+Soft and silent, as can be
+Furry little secrets, for you and me
+
+Purrs in the morning, and purrs at night
+Their little hearts, beating with delight
+Claws that scratch, and noses fine
+Feline friends, forever divine
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Here's a short poem about dogs:
+
+Tails that wag, hearts that sing
+Faithful friends, with love that clings
+Ears that perk, and eyes that shine
+Loyal companions, all the time
+
+Snouts that sniff, and paws that play
+Bringing joy, every single day
+Barks of excitement, and snuggles too
+Canine love, that's forever true
+================================ Human Message =================================
+
+what's my name?
+================================== Ai Message ==================================
+
+Your name is Bob!
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+代码说明参见本节[短期记忆 -> 模型之前](#模型之前)。
+
+### 删除消息
+```python
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langchain.messages import RemoveMessage
+from langchain.agents import create_agent, AgentState
+from langchain.agents.middleware import after_model
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.runtime import Runtime
+from langchain_core.runnables import RunnableConfig
+from model_identifiers import llama3dot2_3b_identifier
+
+
+def my_print(step):
+    print('+' * 50 + 'Response ' + str(step) + '+' * 50)
+
+
+def delete_all_messages(state):
+    return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]}
+
+
+@after_model
+def delete_old_messages(state: AgentState, runtime: Runtime) -> dict | None:
+    """Remove old messages to keep conversation manageable."""
+    messages = state["messages"]
+    if len(messages) > 2:
+        # remove the earliest two messages
+        return {"messages": [RemoveMessage(id=m.id) for m in messages[:2]]}
+    return None
+
+
+agent = create_agent(
+    model=llama3dot2_3b_identifier,
+    system_prompt="Please be concise and to the point.",
+    middleware=[delete_old_messages],
+    checkpointer=InMemorySaver(),
+)
+
+config: RunnableConfig = {"configurable": {"thread_id": "1"}}
+
+response1 = agent.invoke({"messages": "hi, my name is bob"}, config)
+my_print(step=1)
+for message in response1["messages"]:
+    message.pretty_print()
+my_print(step=1)
+
+response2 = agent.invoke({"messages": "write a short poem about cats"}, config)
+my_print(step=2)
+for message in response2["messages"]:
+    message.pretty_print()
+my_print(step=2)
+
+response3 = agent.invoke({"messages": "now do the same but for dogs"}, config)
+my_print(step=3)
+for message in response3["messages"]:
+    message.pretty_print()
+my_print(step=3)
+
+final_response = agent.invoke({"messages": "what's my name?"}, config)
+my_print(step=4)
+for message in final_response["messages"]:
+    message.pretty_print()
+my_print(step=4)
+
+```
+
+输出结果：
+
+```
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hi Bob, how can I assist you today?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Here is a short poem about cats:
+
+Furry felines, eyes so bright,
+Purrs in the morning, through the night.
+Whiskers twitch, ears perk up high,
+Playful creatures, passing by.
+
+Soft and silent, yet bold and free,
+Cats bring joy, for you and me.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Here is a short poem about dogs:
+
+Tail wagging, hearts so true,
+Faithful friends, through and through.
+Loyal companions, always near,
+Bringing joy, and calming fear.
+
+Their happy barks, and loving gaze,
+Fill our lives, with joyful days.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+what's my name?
+================================== Ai Message ==================================
+
+I don't have that information. This conversation just started, and I don't have any prior knowledge about you. If you'd like to share your name, I'd be happy to know it!
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+### 概括消息
+如上所示，修剪或删除消息的问题是，可能会在筛选消息队列时丢失信息。
+因此，一些应用使用更复杂的方法：用聊天模型来对历史消息进行总结。
+
+概括消息的示意图如下：
+
+![Summary Message](/img/short-term-memory/summary-message.png)
+
+```python
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.runnables import RunnableConfig
+from model_identifiers import llama3dot2_3b_identifier
+
+
+def my_print(step):
+    print('+' * 50 + 'Response ' + str(step) + '+' * 50)
+
+
+checkpointer = InMemorySaver()
+
+agent = create_agent(
+    model=llama3dot2_3b_identifier,
+    middleware=[
+        SummarizationMiddleware(
+            model=llama3dot2_3b_identifier,
+            trigger=("tokens", 200),
+            keep=("messages", 3)
+        )
+    ],
+    checkpointer=checkpointer,
+)
+
+config: RunnableConfig = {"configurable": {"thread_id": "1"}}
+response1 = agent.invoke({"messages": "hi, my name is bob"}, config)
+my_print(step=1)
+for message in response1["messages"]:
+    message.pretty_print()
+my_print(step=1)
+
+response2 = agent.invoke({"messages": "write a short poem about cats"}, config)
+my_print(step=2)
+for message in response2["messages"]:
+    message.pretty_print()
+my_print(step=2)
+
+response3 = agent.invoke({"messages": "now do the same but for dogs"}, config)
+my_print(step=3)
+for message in response3["messages"]:
+    message.pretty_print()
+my_print(step=3)
+
+final_response = agent.invoke({"messages": "what's my name?"}, config)
+my_print(step=4)
+for message in final_response["messages"]:
+    message.pretty_print()
+my_print(step=4)
+
+```
+
+输出结果：
+
+```
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! It's nice to meet you. Is there something I can help you with, or would you like to chat?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! It's nice to meet you. Is there something I can help you with, or would you like to chat?
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Here's a short poem about cats:
+
+Furry felines, eyes so bright,
+Purrs in the morning, purrs at night.
+Whiskers twitching, ears so fine,
+Claws that scratch, and a gentle shine.
+
+With a flick of their tail, they roam,
+Mysterious creatures, in a gentle home.
+Their soft little noses, and ears so wide,
+Make them a treasure, that glides with pride.
+
+Bob, I hope you like it!
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! It's nice to meet you. Is there something I can help you with, or would you like to chat?
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Here's a short poem about cats:
+
+Furry felines, eyes so bright,
+Purrs in the morning, purrs at night.
+Whiskers twitching, ears so fine,
+Claws that scratch, and a gentle shine.
+
+With a flick of their tail, they roam,
+Mysterious creatures, in a gentle home.
+Their soft little noses, and ears so wide,
+Make them a treasure, that glides with pride.
+
+Bob, I hope you like it!
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Here's a short poem about dogs:
+
+Tails that wag, and hearts so true,
+Faithful friends, through and through.
+Ears that flail, and eyes so bright,
+Snouts that sniff, with joyful delight.
+
+With a bark and a wag, they play,
+Bringing joy, in their own sweet way.
+Their loving nature, and loyal heart,
+Make them a treasure, that never departs.
+
+Bob, I hope you like it!
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+Here is a summary of the conversation to date:
+
+## SESSION INTENT
+Write a short poem about cats.
+
+## SUMMARY
+The user requested a short poem about cats. The AI responded with a poem and asked if the user liked it. The user accepted the poem.
+
+## ARTIFACTS
+None
+
+## NEXT STEPS
+Create a new poem about cats, or provide an alternative request.
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Here's a short poem about dogs:
+
+Tails that wag, and hearts so true,
+Faithful friends, through and through.
+Ears that flail, and eyes so bright,
+Snouts that sniff, with joyful delight.
+
+With a bark and a wag, they play,
+Bringing joy, in their own sweet way.
+Their loving nature, and loyal heart,
+Make them a treasure, that never departs.
+
+Bob, I hope you like it!
+================================ Human Message =================================
+
+what's my name?
+================================== Ai Message ==================================
+
+I don't have any information about your name. We just started our conversation, and I didn't receive any information about you. If you'd like to share your name, I'd be happy to address you by it!
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+代码说明：
+- 代码create_agent使用了中间件SummarizationMiddleware，中间件触发时机是消息发送给模型前，
+触发条件是token数量达到200，触发后保留3条消息。
+- 从运行结果来看，在第4次invoke时，6条消息发送给模型前，达到触发条件。因为总结结果中丢失了name信息，最终模型无法
+回答关于name的问题。
+
+
+
+## 访问记忆（Access memory）
+
+### 工具
+
+#### 读取短期记忆
+
+```python
+from langchain.agents import create_agent, AgentState
+from langchain.tools import tool, ToolRuntime
+from model_identifiers import qwen2dot5_7b_identifier
+
+class CustomState(AgentState):
+    user_id: str
+
+@tool
+def get_user_info(
+    runtime: ToolRuntime
+) -> str:
+    """Look up user info."""
+    user_id = runtime.state["user_id"]
+    return "User is John Smith" if user_id == "user_123" else "Unknown user"
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[get_user_info],
+    state_schema=CustomState,
+)
+
+result = agent.invoke({
+    "messages": "look up user information",
+    "user_id": "user_123"
+})
+print(result["messages"][-1].content)
+# > User is John Smith.
+```
+
+输出结果：
+```
+The user information has been found. The user is named John Smith. Is there any other information you need?
+```
+
+#### 写入短期记忆
+
+```python
+from langchain.tools import tool, ToolRuntime
+from langchain.messages import ToolMessage
+from langchain.agents import create_agent, AgentState
+from langgraph.types import Command
+from pydantic import BaseModel
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+class CustomState(AgentState):
+    user_name: str
+
+class CustomContext(BaseModel):
+    user_id: str
+
+@tool
+def update_user_info(
+    runtime: ToolRuntime[CustomContext, CustomState],
+) -> Command:
+    """Look up and update user info."""
+    user_id = runtime.context.user_id
+    name = "John Smith" if user_id == "user_123" else "Unknown user"
+    return Command(update={
+        "user_name": name,
+        # update the message history
+        "messages": [
+            ToolMessage(
+                "Successfully looked up user information",
+                tool_call_id=runtime.tool_call_id
+            )
+        ]
+    })
+
+@tool
+def greet(
+    runtime: ToolRuntime[CustomContext, CustomState]
+) -> str | Command:
+    """Use this to greet the user once you found their info."""
+    user_name = runtime.state.get("user_name", None)
+
+    if user_name is None:
+       return Command(update={
+            "messages": [
+                ToolMessage(
+                    "请调用'update_user_info'工具，它将会获取和更新用户名",
+                    tool_call_id=runtime.tool_call_id
+                )
+            ]
+        })
+    return f"Hello {user_name}!"
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[update_user_info, greet],
+    state_schema=CustomState,
+    context_schema=CustomContext,
+)
+
+response = agent.invoke(
+    {"messages": [{"role": "user", "content": "greet the user"}]},
+    context=CustomContext(user_id="user_123"),
+)
+
+for message in response["messages"]:
+    message.pretty_print()
+```
+
+输出结果：
+
+```
+================================ Human Message =================================
+
+greet the user
+================================== Ai Message ==================================
+Tool Calls:
+  greet (429c0c55-7822-4675-83fa-bf3067127ce1)
+ Call ID: 429c0c55-7822-4675-83fa-bf3067127ce1
+  Args:
+================================= Tool Message =================================
+Name: greet
+
+请调用'update_user_info'工具，它将会获取和更新用户名
+================================== Ai Message ==================================
+Tool Calls:
+  update_user_info (0ae8167d-e45c-42ab-a993-e5b8da36c87d)
+ Call ID: 0ae8167d-e45c-42ab-a993-e5b8da36c87d
+  Args:
+================================= Tool Message =================================
+Name: update_user_info
+
+Successfully looked up user information
+================================== Ai Message ==================================
+
+Great! I have successfully looked up your user information. Now, let me greet you.
+Tool Calls:
+  greet (d2cd464a-a78f-4664-beb0-81ce694dc978)
+ Call ID: d2cd464a-a78f-4664-beb0-81ce694dc978
+  Args:
+================================= Tool Message =================================
+Name: greet
+
+Hello John Smith!
+================================== Ai Message ==================================
+Tool Calls:
+  update_user_info (9c6f35eb-bd30-4046-892e-2c81738e4e43)
+ Call ID: 9c6f35eb-bd30-4046-892e-2c81738e4e43
+  Args:
+================================= Tool Message =================================
+Name: update_user_info
+
+Successfully looked up user information
+================================== Ai Message ==================================
+
+Hello John Smith! It's nice to see you again.
+```
+### 中间件
+
+#### 提示词
+可以在中间件（middleware）中读取短期记忆（状态 state），以此基于对话历史或者自定义状态字段来构造动态提示词。
+
+代码如下：
+```python
+from langchain.agents import create_agent
+from typing import TypedDict
+from langchain.agents.middleware import dynamic_prompt, ModelRequest
+from model_identifiers import qwen2dot5_7b_identifier
+
+class CustomContext(TypedDict):
+    user_name: str
+
+
+def get_weather(city: str) -> str:
+    """Get the weather in a city."""
+
+    return f"The weather in {city} is always sunny!"
+
+
+@dynamic_prompt
+def dynamic_system_prompt(request: ModelRequest) -> str:
+    user_name = request.runtime.context["user_name"]
+    system_prompt = f"打招呼格式为：Hi {user_name}."
+    return system_prompt
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[get_weather],
+    middleware=[dynamic_system_prompt],
+    context_schema=CustomContext,
+)
+
+response = agent.invoke(
+    {"messages": [{"role": "user", "content": "请先向用户打招呼，然后告诉他SF的天气情况 "}]},
+    context=CustomContext(user_name="John Smith"),
+)
+for msg in response["messages"]:
+    msg.pretty_print()
+```
+
+输出结果：
+
+```
+================================ Human Message =================================
+
+请先向用户打招呼，然后告诉他SF的天气情况 
+================================== Ai Message ==================================
+
+Hi John Smith. The current weather in SF is as follows:
+Tool Calls:
+  get_weather (c501cf81-3b4c-420a-b925-1a827368845a)
+ Call ID: c501cf81-3b4c-420a-b925-1a827368845a
+  Args:
+    city: SF
+================================= Tool Message =================================
+Name: get_weather
+
+The weather in SF is always sunny!
+================================== Ai Message ==================================
+
+Hi John Smith. The current weather in SF is always sunny!
+```
+
+#### 模型之前
+before_model 是 LangChain Agent 中间件里的一个装饰器：
+它让你在每次调用模型之前插入一段自定义逻辑，这段逻辑可以读取和修改 Agent 的 state（尤其是 messages）。
+
+它的流程如图：
+
+![Before Model](/img/short-term-memory/before-model.png)
+
+在进入模型之前，总是要执行before_model的逻辑。
+
+代码如下：
+
+```python
+from langchain.messages import RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain.agents import create_agent, AgentState
+from langchain.agents.middleware import before_model
+from langchain_core.runnables import RunnableConfig
+from langgraph.runtime import Runtime
+from typing import Any
+from model_identifiers import qwen2dot5_7b_identifier
+
+
+def my_print(step):
+    print('+' * 50 + 'Response ' + str(step) + '+' * 50)
+
+
+@before_model
+def trim_messages(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+    """Keep only the last few messages to fit context window."""
+    messages = state["messages"]
+
+    if len(messages) <= 3:
+        return None  # No changes needed
+
+    # 如果消息长度大于3，裁剪.
+    first_msg = messages[0]
+    recent_messages = messages[-3:] if len(messages) % 2 == 0 else messages[-4:]
+    new_messages = [first_msg] + recent_messages
+
+    return {
+        "messages": [
+            RemoveMessage(id=REMOVE_ALL_MESSAGES),
+            *new_messages
+        ]
+    }
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    middleware=[trim_messages],
+    checkpointer=InMemorySaver()
+)
+
+config: RunnableConfig = {"configurable": {"thread_id": "1"}}
+
+response1 = agent.invoke({"messages": "hi, my name is bob"}, config)
+my_print(step=1)
+for message in response1["messages"]:
+    message.pretty_print()
+my_print(step=1)
+
+response2 = agent.invoke({"messages": "write a short poem about cats"}, config)
+my_print(step=2)
+for message in response2["messages"]:
+    message.pretty_print()
+my_print(step=2)
+
+response3 = agent.invoke({"messages": "now do the same but for dogs"}, config)
+my_print(step=3)
+for message in response3["messages"]:
+    message.pretty_print()
+my_print(step=3)
+
+final_response = agent.invoke({"messages": "what's my name?"}, config)
+my_print(step=4)
+for message in final_response["messages"]:
+    message.pretty_print()
+my_print(step=4)
+```
+
+输出结果：
+
+```
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Of course, here's a short poem about cats for you:
+
+Whiskered masters of the night,
+Silent paws and purring delight.
+With eyes that gleam like stars so bright,
+They rule their realms with gentle might.
+
+In shadows they take quiet steps,
+A world of whispers and soft leaps.
+Yet when they curl in laps, they keep
+A feline grace that never sleeps.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+================================ Human Message =================================
+
+write a short poem about cats
+================================== Ai Message ==================================
+
+Of course, here's a short poem about cats for you:
+
+Whiskered masters of the night,
+Silent paws and purring delight.
+With eyes that gleam like stars so bright,
+They rule their realms with gentle might.
+
+In shadows they take quiet steps,
+A world of whispers and soft leaps.
+Yet when they curl in laps, they keep
+A feline grace that never sleeps.
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Certainly! Here’s a short poem about dogs:
+
+Four-legged friends with wagging tails,
+Devoted hearts, tails that enthrall.
+In fields of green and city hall,
+Their loyalty stands steadfast, tall.
+
+With paws that softly pat and nudge,
+They offer comfort, lift the mood.
+Through rain and shine, they run and rush,
+In every moment, love must flourish.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Of course, here's a short poem about cats for you:
+
+Whiskered masters of the night,
+Silent paws and purring delight.
+With eyes that gleam like stars so bright,
+They rule their realms with gentle might.
+
+In shadows they take quiet steps,
+A world of whispers and soft leaps.
+Yet when they curl in laps, they keep
+A feline grace that never sleeps.
+================================ Human Message =================================
+
+now do the same but for dogs
+================================== Ai Message ==================================
+
+Certainly! Here’s a short poem about dogs:
+
+Four-legged friends with wagging tails,
+Devoted hearts, tails that enthrall.
+In fields of green and city hall,
+Their loyalty stands steadfast, tall.
+
+With paws that softly pat and nudge,
+They offer comfort, lift the mood.
+Through rain and shine, they run and rush,
+In every moment, love must flourish.
+================================ Human Message =================================
+
+what's my name?
+================================== Ai Message ==================================
+
+Your name is Bob.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 4++++++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+- 代码中before_model的逻辑是裁剪消息。裁剪逻辑：
+  - 如果消息长度 `<= 3`，不做裁剪。
+  - 如果消息长度 `> 3`，保留第1条消息和最近的几条消息。最近几条消息保留逻辑：
+    - 如果消息数为偶数，保留最后3条，
+    - 如果消息数是奇数，保留最后4条。
+- trim_messages的返回值不表示最终的消息内容，而是修改的指令，None表示不做任何修改。
+- 在create_agent中通过中间件middleware来指定before_model。
+- 代码中使用了同一个thread_id，这样能保证每次invoke，模型看到的是同一个对话。
+- 代码中总共执行了4次invoke，我们用hi表示第i次human发送的消息，ai表示模型第i次回复的消息，下面来看每次invoke，
+before_model的消息是怎么裁剪的？
+
+```
+第1次invoke，h1="hi, my name is bob"：
+before_model调用前，消息列表messages=[h1]，
+before_model调用后，消息列表messages=[h1]，（因len(messages)=1 ≤ 3 → 不裁剪）
+之后调用 model，回复 a1，此时messages=[h1, a1]
+
+第2次invoke，h2="write a short poem about cats"：
+before_model调用前，消息列表messages=[h1, a1, h2]，
+before_model调用后，消息列表messages=[h1, a1, h2]，（因len(messages)=3 ≤ 3 → 不裁剪）
+之后调用 model，回复 a2，此时messages=[h1, a1, h2, a2]
+
+第3次invoke，h3="now do the same but for dogs"：
+before_model调用前，消息列表messages=[h1, a1, h2, a2, h3]，
+before_model调用后，消息列表messages=[h1, a1, h2, a2, h3]，（因len(messages)=5 > 3 且为奇数，取第1条和最后4条 → 实际没裁剪）
+之后调用 model，回复 a3，此时messages=[h1, a1, h2, a2, h3, a3]
+
+第4次invoke，h4="what's my name?"：
+before_model调用前，消息列表messages=[h1, a1, h2, a2, h3, a3, h4]，
+before_model调用后，消息列表messages=[h1, a2, h3, a3, h4]，（因len(messages)=7 > 3 且为奇数，取第1条和最后4条 → 实际没裁剪）
+之后调用 model，回复 a4，此时messages=[h1, a2, h3, a3, h4, a4]
+
+也就是最终消息列表messages=[h1, a2, h3, a3, h4, a4].
+删除了a1="Hello Bob! Nice to meet you. How can I assist you today?"和
+h2="write a short poem about cats".
+```
+
+这样代码的输出结果是一致的。
+
+#### 模型之后
+after_model 也是 LangChain Agent 中间件里的一个装饰器：
+它让你在每次调用模型之后插入一段自定义逻辑，这段逻辑可以读取和修改 Agent 的 state（尤其是 messages）。
+
+它的流程如图：
+
+
+![After Model](/img/short-term-memory/after-model.png)
+
+```python
+from langchain.messages import RemoveMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain.agents import create_agent, AgentState
+from langchain.agents.middleware import after_model
+from langgraph.runtime import Runtime
+from model_identifiers import qwen2dot5_7b_identifier
+from langchain_core.runnables import RunnableConfig
+
+
+def my_print(step):
+    print('+' * 50 + 'Response ' + str(step) + '+' * 50)
+
+
+@after_model
+def validate_response(state: AgentState, runtime: Runtime) -> dict | None:
+    """Remove messages containing sensitive words."""
+
+    my_print(step=0)
+    for msg in state["messages"]:
+        msg.pretty_print()
+    my_print(step=0)
+
+    STOP_WORDS = ["password", "secret"]
+    last_message = state["messages"][-1]
+
+    if any(word in last_message.content for word in STOP_WORDS):
+        return {"messages": [RemoveMessage(id=last_message.id)]}
+
+    return None
+
+
+agent = create_agent(
+    model=qwen2dot5_7b_identifier,
+    tools=[],
+    middleware=[validate_response],
+    checkpointer=InMemorySaver(),
+)
+
+config: RunnableConfig = {"configurable": {"thread_id": "1"}}
+
+response1 = agent.invoke({"messages": "hi, my name is bob"}, config)
+my_print(step=1)
+for message in response1["messages"]:
+    message.pretty_print()
+my_print(step=1)
+
+response2 = agent.invoke({"messages": "write a password"}, config)
+my_print(step=2)
+for message in response2["messages"]:
+    message.pretty_print()
+my_print(step=2)
+
+response3 = agent.invoke({"messages": "what's my name?"}, config)
+my_print(step=3)
+for message in response3["messages"]:
+    message.pretty_print()
+my_print(step=3)
+
+```
+
+输出结果：
+
+```
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 0++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 0++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 1++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 0++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+================================ Human Message =================================
+
+write a password
+================================== Ai Message ==================================
+
+Sure, here's a secure password for you:
+
+
+B0bP@ssw0rd123!
+
+
+Remember to keep your password safe and consider using a password manager to store it securely. Also, make sure to use a variety of characters including numbers, symbols, and both uppercase and lowercase letters to enhance security.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 0++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+================================ Human Message =================================
+
+write a password
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 2++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 0++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+================================ Human Message =================================
+
+write a password
+================================ Human Message =================================
+
+what's my name?
+================================== Ai Message ==================================
+
+Your name is Bob. To ensure your password is secure, here's a randomly generated password for you: 
+
+`B0bPassw0rd123!`
+
+Remember to keep it safe and consider using a password manager to store it securely.
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 0++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+================================ Human Message =================================
+
+hi, my name is bob
+================================== Ai Message ==================================
+
+Hello Bob! Nice to meet you. How can I assist you today?
+================================ Human Message =================================
+
+write a password
+================================ Human Message =================================
+
+what's my name?
+++++++++++++++++++++++++++++++++++++++++++++++++++Response 3++++++++++++++++++++++++++++++++++++++++++++++++++
+```
